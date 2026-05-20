@@ -2,7 +2,7 @@
 
 BrewDeck is a beautifully designed, native macOS graphical user interface for Homebrew. It allows you to effortlessly discover, install, update, and manage your Homebrew packages (both Casks and Formulae) with a premium aesthetic that perfectly matches the modern macOS design language.
 
-![BrewDeck UI Banner](Assets/vscode_banner.png)
+![BrewDeck UI Banner](Assets/CleanShot 2026-05-20 at 13.52.44@2x.png)
 
 ## Features
 
