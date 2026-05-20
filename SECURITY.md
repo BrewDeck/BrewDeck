@@ -2,20 +2,20 @@
 
 ## Supported Versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+We actively support and patch the current development and release versions of BrewDeck. As a new project, security updates are rolled into the latest releases.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :x:                |
-| 5.0.x   | :x:                |
-| 4.0.x   | :x:                |
-| < 4.0   | :white_check_mark: |
+| Version | Supported |
+| ------- | --------- |
+| 1.0.x   | Yes       |
+| < 1.0   | Yes       |
 
 ## Reporting a Vulnerability
 
-Use this section to tell people how to report a vulnerability.
+If you find a security vulnerability in BrewDeck, please do not open a public GitHub issue. Instead, help keep the project secure by reporting it privately.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+You can report vulnerabilities by opening a private security advisory directly on this repository via the **Security** tab, or by contacting the project maintainers directly if contact info is listed on the profile.
+
+### What to Expect:
+* **Acknowledgment:** You will receive a response acknowledging your report within 48 hours.
+* **Updates:** We will keep you updated on our progress as we investigate and work on a fix.
+* **Resolution:** If the vulnerability is verified, a patch will be released in the next update, and you will be credited for the discovery if you wish.
