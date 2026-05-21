@@ -33,7 +33,18 @@ Since BrewDeck is built to be as lightweight and independent as possible, it doe
    ./build.sh
    ```
 
-3. Launch the app! The script automatically packages the compiled executable into `BrewDeck.app` inside the project directory. You can drag this to your `/Applications` folder or open it directly:
+3. Do the following:
+      - Type the following command (include the space at the end):
+      ```bash
+      xattr -cr
+      ```
+      - Drag and drop the application directly inside the terminal window.
+
+      - Press enter.
+
+      - Launch the application as normal
+
+5. Launch the app! The script automatically packages the compiled executable into `BrewDeck.app` inside the project directory. You can drag this to your `/Applications` folder or open it directly:
    ```bash
    open BrewDeck.app
    ```
