@@ -8,9 +8,9 @@ Before you start hacking away, please take a moment to read through this guide t
 
 ## 🛠️ Getting Started
 
-To work on brew deck, you'll need a Mac running macOS 14+ (or whatever minimum version we are targeting) and the latest version of Xcode.
+To work on BrewDeck, you'll need a Mac running macOS 14.0+ and the latest version of Xcode or Xcode Command Line Tools.
 
 1. **Fork** the repository on GitHub.
 2. **Clone** your fork locally:
    ```bash
-   git clone [https://github.com/YOUR-USERNAME/brew-deck.git](https://github.com/YOUR-USERNAME/brew-deck.git)
+   git clone https://github.com/yourusername/BrewDeck.git

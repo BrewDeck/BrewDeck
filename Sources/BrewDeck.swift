@@ -14,7 +14,7 @@ extension String {
 }
 
 func logDebug(_ message: String) {
-    let logPath = "/Users/yousefenab/.gemini/antigravity/scratch/brew-deck-swift/debug.log"
+    let logPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".brewdeck_debug.log").path
     let timestamp = Date().description
     let logLine = "[\(timestamp)] \(message)\n"
     if let data = logLine.data(using: .utf8) {
@@ -2497,7 +2497,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Clear log file at start
-        try? "".write(toFile: "/Users/yousefenab/.gemini/antigravity/scratch/brew-deck-swift/debug.log", atomically: true, encoding: .utf8)
+        let logPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".brewdeck_debug.log").path
+        try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
         logDebug("BrewDeck application started launch lifecycle.")
         
         // Run on next runloop cycle to capture the initial window

@@ -28,18 +28,18 @@ mkdir -p ModuleCache
 swiftc -parse-as-library Sources/BrewDeck.swift \
   -sdk "$SDK_PATH" \
   -module-cache-path $(pwd)/ModuleCache \
-  -target arm64-apple-macos26.0 \
+  -target arm64-apple-macos14.0 \
   -framework SwiftUI \
   -framework AppKit \
   -framework FoundationModels \
   -o BrewDeck.app/Contents/MacOS/BrewDeck
 
 # 2b. Copy app icon asset into bundle
-if [ -f "/Users/yousefenab/Downloads/BrewDeck-iOS-Default-1024x1024@1x.png" ]; then
+if [ -f "Assets/AppIcon.png" ]; then
   echo "==> Copying app icon into bundle Resources..."
-  cp "/Users/yousefenab/Downloads/BrewDeck-iOS-Default-1024x1024@1x.png" BrewDeck.app/Contents/Resources/AppIcon.png
+  cp "Assets/AppIcon.png" BrewDeck.app/Contents/Resources/AppIcon.png
 else
-  echo "WARNING: App icon not found at /Users/yousefenab/Downloads/BrewDeck-iOS-Default-1024x1024@1x.png"
+  echo "WARNING: App icon not found at Assets/AppIcon.png"
 fi
 
 # 3. Generate the app metadata Info.plist file
@@ -60,9 +60,9 @@ cat <<EOF > BrewDeck.app/Contents/Info.plist
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.2</string>
     <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
+    <string>14.0</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>LSUIElement</key>
