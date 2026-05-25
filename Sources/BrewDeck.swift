@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 import Combine
 import LocalAuthentication
+import FoundationModels
 
 extension String {
     func addingPercentEncodingForQuery() -> String? {
@@ -689,6 +690,604 @@ class BrewManager: ObservableObject {
     }
 }
 
+// --- AI BACKEND SYSTEM ---
+
+extension ShapeStyle where Self == Material {
+    static var liquidGlass: Material {
+        return .ultraThinMaterial
+    }
+}
+
+enum AIBackend: String, CaseIterable, Identifiable {
+    case apple = "Apple Intelligence"
+    case openRouter = "OpenRouter"
+    case gemini = "Gemini"
+    case ollama = "Ollama (Local)"
+    
+    var id: String { self.rawValue }
+}
+
+class AIService: ObservableObject {
+    static let shared = AIService()
+    
+    @Published var isLoading: Bool = false
+    @Published var lastResponse: String = ""
+    @Published var lastError: String? = nil
+    
+    var selectedBackend: AIBackend {
+        let raw = UserDefaults.standard.string(forKey: "selectedAIBackend") ?? AIBackend.apple.rawValue
+        return AIBackend(rawValue: raw) ?? .apple
+    }
+    
+    func ask(question: String, forPackage pkg: BrewPackage) async -> String {
+        let prompt = "Tell me about the macOS/CLI package '\(pkg.name)' (\(pkg.id)). \(question) Package description: \(pkg.description). Type: \(pkg.type). Version: \(pkg.version)."
+        
+        switch selectedBackend {
+        case .apple:
+            return await askAppleFoundationModel(prompt: prompt)
+        case .openRouter:
+            return await askOpenRouter(prompt: prompt)
+        case .gemini:
+            return await askGemini(prompt: prompt)
+        case .ollama:
+            return await askOllama(prompt: prompt)
+        }
+    }
+    
+    private func askAppleFoundationModel(prompt: String) async -> String {
+        do {
+            let session = LanguageModelSession()
+            let response = try await session.respond(to: prompt)
+            return String(describing: response)
+        } catch {
+            return "Apple Intelligence error: \(error.localizedDescription). Make sure Apple Intelligence is enabled in System Settings."
+        }
+    }
+    
+    private func askOpenRouter(prompt: String) async -> String {
+        guard let apiKey = UserDefaults.standard.string(forKey: "openRouterAPIKey"), !apiKey.isEmpty else {
+            return "No OpenRouter API key configured. Please add one in Settings."
+        }
+        guard let url = URL(string: "https://openrouter.ai/api/v1/chat/completions") else { return "Invalid URL" }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        
+        let body: [String: Any] = [
+            "model": "openai/gpt-4o-mini",
+            "messages": [["role": "user", "content": prompt]]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let message = choices.first?["message"] as? [String: Any],
+               let content = message["content"] as? String {
+                return content
+            }
+            return "Failed to parse OpenRouter response."
+        } catch {
+            return "OpenRouter error: \(error.localizedDescription)"
+        }
+    }
+    
+    private func askGemini(prompt: String) async -> String {
+        guard let apiKey = UserDefaults.standard.string(forKey: "geminiAPIKey"), !apiKey.isEmpty else {
+            return "No Gemini API key configured. Please add one in Settings."
+        }
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(apiKey)") else { return "Invalid URL" }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any] = [
+            "contents": [["parts": [["text": prompt]]]]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let candidates = json["candidates"] as? [[String: Any]],
+               let content = candidates.first?["content"] as? [String: Any],
+               let parts = content["parts"] as? [[String: Any]],
+               let text = parts.first?["text"] as? String {
+                return text
+            }
+            return "Failed to parse Gemini response."
+        } catch {
+            return "Gemini error: \(error.localizedDescription)"
+        }
+    }
+    
+    private func askOllama(prompt: String) async -> String {
+        let host = UserDefaults.standard.string(forKey: "ollamaHost") ?? "http://localhost:11434"
+        let model = UserDefaults.standard.string(forKey: "ollamaModel") ?? "llama3.2"
+        guard let url = URL(string: "\(host)/api/generate") else { return "Invalid Ollama URL" }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 120
+        
+        let body: [String: Any] = [
+            "model": model,
+            "prompt": prompt,
+            "stream": false
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let response = json["response"] as? String {
+                return response
+            }
+            return "Failed to parse Ollama response."
+        } catch {
+            return "Ollama error: \(error.localizedDescription). Is Ollama running locally?"
+        }
+    }
+}
+
+// --- AI SETTINGS VIEW ---
+
+struct AISettingsView: View {
+    @AppStorage("selectedAIBackend") private var selectedBackendRaw: String = AIBackend.apple.rawValue
+    @AppStorage("openRouterAPIKey") private var openRouterKey: String = ""
+    @AppStorage("geminiAPIKey") private var geminiKey: String = ""
+    @AppStorage("ollamaHost") private var ollamaHost: String = "http://localhost:11434"
+    @AppStorage("ollamaModel") private var ollamaModel: String = "llama3.2"
+    
+    private var selectedBackend: AIBackend {
+        AIBackend(rawValue: selectedBackendRaw) ?? .apple
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Header
+                HStack(spacing: 12) {
+                    Image(systemName: "brain.head.profile.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.purple, .blue, .cyan],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AI Configuration")
+                            .font(.system(size: 18, weight: .bold))
+                        Text("Choose your preferred AI backend for the Ask AI feature")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.bottom, 4)
+                
+                // Backend Picker
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AI Provider")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.secondary)
+                    
+                    Picker("Backend", selection: $selectedBackendRaw) {
+                        ForEach(AIBackend.allCases) { backend in
+                            HStack {
+                                Image(systemName: iconForBackend(backend))
+                                Text(backend.rawValue)
+                            }
+                            .tag(backend.rawValue)
+                        }
+                    }
+                    .pickerStyle(.radioGroup)
+                }
+                .padding(16)
+                .background(
+                    LiquidGlassView(isHovered: false, isPressed: false, isProminent: false, cornerRadius: 12)
+                )
+                
+                // Provider-specific settings
+                switch selectedBackend {
+                case .apple:
+                    appleSection
+                case .openRouter:
+                    apiKeySection(title: "OpenRouter API Key", key: $openRouterKey, placeholder: "sk-or-v1-...")
+                case .gemini:
+                    apiKeySection(title: "Gemini API Key", key: $geminiKey, placeholder: "AIza...")
+                case .ollama:
+                    ollamaSection
+                }
+            }
+            .padding(24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    
+    var appleSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 16))
+                Text("Apple Intelligence")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            
+            Text("Uses the built-in Apple Foundation Model running on-device via Apple Intelligence. No API key required. Requires Apple Silicon and Apple Intelligence enabled in System Settings.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .lineLimit(nil)
+            
+            HStack(spacing: 6) {
+                Image(systemName: "lock.shield.fill")
+                    .foregroundColor(.green)
+                    .font(.system(size: 11))
+                Text("Private & on-device — your data never leaves your Mac")
+                    .font(.system(size: 10))
+                    .foregroundColor(.green)
+            }
+            .padding(.top, 4)
+        }
+        .padding(16)
+        .background(
+            LiquidGlassView(isHovered: false, isPressed: false, isProminent: false, cornerRadius: 12)
+        )
+    }
+    
+    func apiKeySection(title: String, key: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.secondary)
+            
+            SecureField(placeholder, text: key)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 400)
+            
+            Text("Your API key is stored locally in UserDefaults.")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .padding(16)
+        .background(
+            LiquidGlassView(isHovered: false, isPressed: false, isProminent: false, cornerRadius: 12)
+        )
+    }
+    
+    var ollamaSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 16))
+                Text("Ollama Local Server")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Host URL")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                TextField("http://localhost:11434", text: $ollamaHost)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 400)
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Model Name")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                TextField("llama3.2", text: $ollamaModel)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 400)
+            }
+            
+            Text("Make sure Ollama is running locally before using this backend.")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .padding(16)
+        .background(
+            LiquidGlassView(isHovered: false, isPressed: false, isProminent: false, cornerRadius: 12)
+        )
+    }
+    
+    func iconForBackend(_ backend: AIBackend) -> String {
+        switch backend {
+        case .apple: return "apple.logo"
+        case .openRouter: return "network"
+        case .gemini: return "sparkles"
+        case .ollama: return "desktopcomputer"
+        }
+    }
+}
+
+// --- ASK AI SHEET ---
+
+struct AskAISheet: View {
+    let pkg: BrewPackage
+    @Environment(\.dismiss) var dismiss
+    @State private var question: String = ""
+    @State private var response: String = ""
+    @State private var isLoading: Bool = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                Image(systemName: "brain.head.profile.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [.purple, .blue, .cyan],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ask AI about \(pkg.name)")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Using \(AIService.shared.selectedBackend.rawValue)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+            
+            Divider()
+            
+            // Chat area
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !response.isEmpty {
+                        Text(response)
+                            .font(.system(size: 12))
+                            .textSelection(.enabled)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.primary.opacity(0.03))
+                            .cornerRadius(10)
+                    } else if isLoading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("Thinking...")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(12)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 24))
+                                .foregroundColor(.secondary.opacity(0.5))
+                            Text("Ask anything about this package")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
+                    }
+                }
+                .padding(16)
+            }
+            .frame(maxHeight: .infinity)
+            
+            Divider()
+            
+            // Input bar
+            HStack(spacing: 8) {
+                TextField("What does this package do?", text: $question)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { sendQuestion() }
+                
+                Button(action: sendQuestion) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.blue, .purple],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(question.isEmpty || isLoading)
+            }
+            .padding(12)
+            .background(Color.primary.opacity(0.02))
+        }
+        .frame(width: 500, height: 420)
+        .background(VisualEffectView(material: .hudWindow, blendingMode: .withinWindow, state: .active))
+    }
+    
+    func sendQuestion() {
+        guard !question.isEmpty else { return }
+        let q = question
+        question = ""
+        isLoading = true
+        response = ""
+        
+        Task {
+            let result = await AIService.shared.ask(question: q, forPackage: pkg)
+            await MainActor.run {
+                response = result
+                isLoading = false
+            }
+        }
+    }
+}
+
+// --- LIQUID GLASS PACKAGE CARD VIEW (macOS 26) ---
+
+struct PackageCardView: View {
+    let pkg: BrewPackage
+    @ObservedObject var manager: BrewManager
+    let action: () -> Void
+    @State private var isHovered = false
+    @State private var showAISheet = false
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    PackageIconView(pkg: pkg)
+                        .frame(width: 32, height: 32)
+                        .background(Color.primary.opacity(0.04))
+                        .cornerRadius(8)
+                    
+                    Spacer()
+                    
+                    Button(action: { showAISheet = true }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkles")
+                            Text("Ask AI")
+                        }
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.purple)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pkg.name)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    
+                    Text(pkg.description)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .frame(height: 24, alignment: .topLeading)
+                }
+                
+                HStack {
+                    HStack(spacing: 2) {
+                        Image(systemName: "star.fill")
+                            .foregroundColor(.yellow)
+                            .font(.system(size: 8))
+                        Text(String(format: "%.1f", pkg.rating))
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    Spacer()
+                    Text("VIEW")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.blue)
+                }
+            }
+            .padding(10)
+            .frame(width: 180, height: 120)
+            .containerBackground(.liquidGlass, for: .window)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isHovered ? Color.purple.opacity(0.4) : Color.primary.opacity(0.06), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(isHovered ? 0.12 : 0.04), radius: isHovered ? 6 : 2, y: isHovered ? 3 : 1)
+            .scaleEffect(isHovered ? 1.025 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.75)) {
+                isHovered = hovering
+            }
+        }
+        .sheet(isPresented: $showAISheet) {
+            AskAISheet(pkg: pkg)
+        }
+    }
+}
+
+// --- RECOMMENDED PACKAGES CAROUSEL (macOS 26) ---
+
+struct RecommendedPackagesCarousel: View {
+    @ObservedObject var manager: BrewManager
+    @Binding var selectedPackage: BrewPackage?
+    
+    var recommendedList: [BrewPackage] {
+        let installed = manager.packages.filter { $0.installedVersion != nil }
+        let installedIds = Set(installed.map { $0.id })
+        
+        var recommendedIds: [String] = []
+        
+        // Custom matching rules
+        if installed.contains(where: { $0.id.contains("code") || $0.id == "iterm2" || $0.id == "docker" }) {
+            recommendedIds.append(contentsOf: ["iterm2", "docker", "postman", "visual-studio-code"])
+        }
+        if installed.contains(where: { $0.id == "git" }) {
+            recommendedIds.append(contentsOf: ["gh", "lazygit"])
+        }
+        
+        // Premium default utilities
+        recommendedIds.append(contentsOf: ["rectangle", "alfred", "vlc", "stats", "appcleaner", "cyberduck", "handbrake"])
+        
+        var finalIds: [String] = []
+        for id in recommendedIds {
+            if !installedIds.contains(id) && !finalIds.contains(id) {
+                finalIds.append(id)
+            }
+        }
+        
+        let found = manager.packages.filter { finalIds.contains($0.id) }
+        if found.isEmpty {
+            // Pick a few uninstalled ones from all packages
+            return Array(manager.packages.filter { $0.installedVersion == nil }.prefix(5))
+        }
+        return found
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .foregroundColor(.purple)
+                Text("AI Recommendations For You")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.primary)
+            }
+            .padding(.horizontal, 4)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(recommendedList) { pkg in
+                        PackageCardView(pkg: pkg, manager: manager, action: {
+                            selectedPackage = pkg
+                        })
+                    }
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, 4)
+                .padding(.bottom, 8)
+            }
+            .scrollTargetBehavior(.paging)
+        }
+    }
+}
+
 // --- APP WINDOW WRAPPER VIBRANCY (LIQUID GLASS) ---
 
 struct VisualEffectView: NSViewRepresentable {
@@ -937,6 +1536,7 @@ struct PackageCard: View {
     @Binding var selectedIds: Set<String>
     
     @State private var isHovered = false
+    @State private var showAISheet = false
     
     var isProcessing: Bool {
         manager.threads.contains { $0.activeRunningId == pkg.id }
@@ -1002,29 +1602,45 @@ struct PackageCard: View {
                             .foregroundColor(.secondary)
                     } else {
                         if pkg.installedVersion == nil {
-                            Button("Install") {
-                                manager.queueAction(action: "install", pkg: pkg)
-                            }
-                            .buttonStyle(GlassButtonStyle(isProminent: false))
-                        } else {
-                            if pkg.type == "cask" {
-                                Button("Open") {
-                                    manager.openApp(pkg: pkg)
-                                }
-                                .buttonStyle(GlassButtonStyle(isProminent: true))
-                            }
-                            
-                            if pkg.hasUpdate {
-                                Button("Upgrade") {
-                                    manager.queueAction(action: "upgrade", pkg: pkg)
+                            HStack(spacing: 4) {
+                                Button("Install") {
+                                    manager.queueAction(action: "install", pkg: pkg)
                                 }
                                 .buttonStyle(GlassButtonStyle(isProminent: false))
+                                
+                                Button(action: { showAISheet = true }) {
+                                    Image(systemName: "sparkles")
+                                }
+                                .buttonStyle(GlassButtonStyle(isProminent: false))
+                                .help("Ask AI about this package")
                             }
-                            
-                            Button("Remove") {
-                                manager.queueAction(action: "uninstall", pkg: pkg)
+                        } else {
+                            HStack(spacing: 4) {
+                                if pkg.type == "cask" {
+                                    Button("Open") {
+                                        manager.openApp(pkg: pkg)
+                                    }
+                                    .buttonStyle(GlassButtonStyle(isProminent: true))
+                                }
+                                
+                                if pkg.hasUpdate {
+                                    Button("Upgrade") {
+                                        manager.queueAction(action: "upgrade", pkg: pkg)
+                                    }
+                                    .buttonStyle(GlassButtonStyle(isProminent: false))
+                                }
+                                
+                                Button("Remove") {
+                                    manager.queueAction(action: "uninstall", pkg: pkg)
+                                }
+                                .buttonStyle(GlassButtonStyle(isProminent: false))
+                                
+                                Button(action: { showAISheet = true }) {
+                                    Image(systemName: "sparkles")
+                                }
+                                .buttonStyle(GlassButtonStyle(isProminent: false))
+                                .help("Ask AI about this package")
                             }
-                            .buttonStyle(GlassButtonStyle(isProminent: false))
                         }
                     }
                 }
@@ -1049,6 +1665,9 @@ struct PackageCard: View {
                 isHovered = hovering
             }
         }
+        .sheet(isPresented: $showAISheet) {
+            AskAISheet(pkg: pkg)
+        }
     }
 }
 
@@ -1058,6 +1677,7 @@ struct PackageRow: View {
     @Binding var selectedIds: Set<String>
     
     @State private var isHovered = false
+    @State private var showAISheet = false
     
     var isProcessing: Bool {
         manager.threads.contains { $0.activeRunningId == pkg.id }
@@ -1153,10 +1773,20 @@ struct PackageRow: View {
                         .foregroundColor(.secondary)
                 } else {
                     if pkg.installedVersion == nil {
-                        Button("Install") {
-                            manager.queueAction(action: "install", pkg: pkg)
+                        HStack(spacing: 6) {
+                            Button("Install") {
+                                manager.queueAction(action: "install", pkg: pkg)
+                            }
+                            .buttonStyle(GlassButtonStyle(isProminent: false))
+                            
+                            Button(action: { showAISheet = true }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "sparkles")
+                                    Text("Ask AI")
+                                }
+                            }
+                            .buttonStyle(GlassButtonStyle(isProminent: false))
                         }
-                        .buttonStyle(GlassButtonStyle(isProminent: false))
                     } else {
                         HStack(spacing: 6) {
                             if pkg.type == "cask" {
@@ -1175,6 +1805,14 @@ struct PackageRow: View {
                             
                             Button("Uninstall") {
                                 manager.queueAction(action: "uninstall", pkg: pkg)
+                            }
+                            .buttonStyle(GlassButtonStyle(isProminent: false))
+                            
+                            Button(action: { showAISheet = true }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "sparkles")
+                                    Text("Ask AI")
+                                }
                             }
                             .buttonStyle(GlassButtonStyle(isProminent: false))
                         }
@@ -1199,6 +1837,9 @@ struct PackageRow: View {
                 isHovered = hovering
             }
         }
+        .sheet(isPresented: $showAISheet) {
+            AskAISheet(pkg: pkg)
+        }
     }
 }
 
@@ -1209,6 +1850,7 @@ enum SidebarTab: String, CaseIterable, Hashable {
     case casks
     case formulae
     case updates
+    case settings
     
     var title: String {
         switch self {
@@ -1216,6 +1858,7 @@ enum SidebarTab: String, CaseIterable, Hashable {
         case .casks: return "Installed Casks"
         case .formulae: return "Formulae (CLI)"
         case .updates: return "Updates"
+        case .settings: return "AI Settings"
         }
     }
     
@@ -1225,6 +1868,7 @@ enum SidebarTab: String, CaseIterable, Hashable {
         case .casks: return "square.stack.3d.up.fill"
         case .formulae: return "terminal.fill"
         case .updates: return "arrow.clockwise.circle.fill"
+        case .settings: return "gearshape.fill"
         }
     }
     
@@ -1238,9 +1882,12 @@ enum SidebarTab: String, CaseIterable, Hashable {
             return manager.packages.filter { $0.type == "formula" && $0.installedVersion != nil }.count
         case .updates:
             return manager.packages.filter { $0.hasUpdate }.count
+        case .settings:
+            return 0
         }
     }
 }
+
 
 // --- MAIN VIEW VIEW WITH NATIVE NAVIGATION SPLIT VIEW ---
 
@@ -1480,6 +2127,9 @@ struct DetailView: View {
     @State private var selectedPackage: BrewPackage? = nil
     
     var body: some View {
+        if tab == .settings {
+            AISettingsView()
+        } else {
         VStack(spacing: 0) {
             if manager.packages.isEmpty {
                 VStack(spacing: 12) {
@@ -1496,6 +2146,8 @@ struct DetailView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         if tab == .discover && searchQuery.isEmpty {
                             FeaturedCarouselSection(manager: manager, selectedPackage: $selectedPackage)
+                            
+                            RecommendedPackagesCarousel(manager: manager, selectedPackage: $selectedPackage)
                             
                             Text("Browse Categories")
                                 .font(.system(size: 14, weight: .bold))
@@ -1559,7 +2211,7 @@ struct DetailView: View {
                                     }
                                 }
                             }
-                    }
+                        }
                     }
                     .padding(16)
                 }
@@ -1623,11 +2275,12 @@ struct DetailView: View {
                     Button("Clear") {
                         selectedIds.removeAll()
                     }
-                    .buttonStyle(.bordered)
                 }
             }
         }
+        }
     }
+
     
     var subtitleText: String {
         if manager.allCasksLoading {
@@ -1648,6 +2301,8 @@ struct DetailView: View {
             case .discover:
                 if filterType == "installed" && pkg.installedVersion == nil { return false }
                 if filterType == "updates" && !pkg.hasUpdate { return false }
+            case .settings:
+                return false
             }
             
             if !searchQuery.isEmpty {
@@ -1962,6 +2617,8 @@ struct PackageDetailSheet: View {
     @ObservedObject var manager: BrewManager
     @Environment(\.dismiss) var dismiss
     
+    @State private var showAISheet = false
+    
     var isProcessing: Bool {
         manager.threads.contains { $0.activeRunningId == pkg.id }
     }
@@ -1988,7 +2645,7 @@ struct PackageDetailSheet: View {
                             .font(.system(size: 8, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(pkg.type == "cask" ? Color.purple.opacity(0.12) : Color.orange.opacity(0.12))
+                            .background(pkg.type == "cask" ? Color.purple.opacity(0.1) : Color.orange.opacity(0.1))
                             .foregroundColor(pkg.type == "cask" ? .purple : .orange)
                             .cornerRadius(4)
                     }
@@ -2114,6 +2771,14 @@ struct PackageDetailSheet: View {
             
             // Actions Footer
             HStack {
+                Button(action: { showAISheet = true }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                        Text("Ask AI")
+                    }
+                }
+                .buttonStyle(GlassButtonStyle(isProminent: false))
+                
                 Spacer()
                 
                 if isProcessing {
@@ -2170,8 +2835,12 @@ struct PackageDetailSheet: View {
         }
         .frame(width: 480, height: 460)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .withinWindow, state: .active))
+        .sheet(isPresented: $showAISheet) {
+            AskAISheet(pkg: pkg)
+        }
     }
 }
+
 
 struct DetailMetaRow: View {
     let label: String

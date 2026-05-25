@@ -11,16 +11,36 @@ echo "--------------------------------------------------------"
 mkdir -p BrewDeck.app/Contents/MacOS
 mkdir -p BrewDeck.app/Contents/Resources
 
-# 2. Compile the Swift source into a native macOS arm64 executable
+
 echo "==> Compiling Swift sources using swiftc..."
-swiftc Sources/BrewDeck.swift \
-  -sdk $(xcrun --show-sdk-path) \
-  -target arm64-apple-macos13.0 \
+# Optional external Swift toolchain with its own SDK
+if [ -n "$TOOLCHAIN_PATH" ] && [ -d "$TOOLCHAIN_PATH" ]; then
+  echo "Using external Swift toolchain at $TOOLCHAIN_PATH"
+  export PATH="$TOOLCHAIN_PATH/usr/bin:$PATH"
+  SDK_PATH="$TOOLCHAIN_PATH/SDKs/MacOSX.sdk"
+else
+  # Fallback to Command Line Tools SDK
+  SDK_PATH=$(xcrun --show-sdk-path 2>/dev/null || echo "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")
+fi
+# Create a local module cache to avoid sandbox writes
+mkdir -p ModuleCache
+# Compile with chosen SDK and custom module cache
+swiftc -parse-as-library Sources/BrewDeck.swift \
+  -sdk "$SDK_PATH" \
+  -module-cache-path $(pwd)/ModuleCache \
+  -target arm64-apple-macos26.0 \
   -framework SwiftUI \
   -framework AppKit \
-  -O \
-  -parse-as-library \
+  -framework FoundationModels \
   -o BrewDeck.app/Contents/MacOS/BrewDeck
+
+# 2b. Copy app icon asset into bundle
+if [ -f "/Users/yousefenab/Downloads/BrewDeck-iOS-Default-1024x1024@1x.png" ]; then
+  echo "==> Copying app icon into bundle Resources..."
+  cp "/Users/yousefenab/Downloads/BrewDeck-iOS-Default-1024x1024@1x.png" BrewDeck.app/Contents/Resources/AppIcon.png
+else
+  echo "WARNING: App icon not found at /Users/yousefenab/Downloads/BrewDeck-iOS-Default-1024x1024@1x.png"
+fi
 
 # 3. Generate the app metadata Info.plist file
 echo "==> Constructing Contents/Info.plist file..."
@@ -42,7 +62,7 @@ cat <<EOF > BrewDeck.app/Contents/Info.plist
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>26.0</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>LSUIElement</key>
@@ -50,6 +70,7 @@ cat <<EOF > BrewDeck.app/Contents/Info.plist
 </dict>
 </plist>
 EOF
+codesign --remove-signature BrewDeck.app
 
 echo "==> BrewDeck.app successfully built!"
 echo "--------------------------------------------------------"
