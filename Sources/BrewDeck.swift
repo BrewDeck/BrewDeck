@@ -1390,6 +1390,9 @@ struct GlassButtonStyle: ButtonStyle {
 
 struct PackageIconView: View {
     let pkg: BrewPackage
+    // Optimization: Cache /Applications directory listing to avoid redundant disk I/O on every render.
+    // Thread-safe lazy initialization.
+    static let applicationsCache: [String] = (try? FileManager.default.contentsOfDirectory(atPath: "/Applications")) ?? []
     
     var body: some View {
         Group {
@@ -1445,8 +1448,8 @@ struct PackageIconView: View {
             }
         }
         
-        if let files = try? fileManager.contentsOfDirectory(atPath: "/Applications") {
-            for file in files {
+        let files = PackageIconView.applicationsCache
+        for file in files {
                 if file.hasSuffix(".app") {
                     let cleanAppName = file.replacingOccurrences(of: ".app", with: "").lowercased()
                     let cleanPkgId = pkg.id.lowercased()
