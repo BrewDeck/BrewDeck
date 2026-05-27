@@ -1391,6 +1391,11 @@ struct GlassButtonStyle: ButtonStyle {
 struct PackageIconView: View {
     let pkg: BrewPackage
     
+    // BOLT OPTIMIZATION: Thread-safe lazy caching via 'static let' to avoid redundant disk I/O.
+    // This reduces UI lag when scrolling through long lists of packages.
+    static let applicationsCache: [String] = (try? FileManager.default.contentsOfDirectory(atPath: "/Applications")) ?? []
+    static let iconPathCache = NSCache<NSString, NSString>()
+
     var body: some View {
         Group {
             if let localIcon = getLocalAppIcon() {
@@ -1425,6 +1430,11 @@ struct PackageIconView: View {
     }
     
     func getLocalAppIcon() -> NSImage? {
+        // BOLT: Check in-memory cache for previously resolved path to avoid file system lookups
+        if let cachedPath = Self.iconPathCache.object(forKey: pkg.id as NSString) {
+            return NSWorkspace.shared.icon(forFile: cachedPath as String)
+        }
+
         let fileManager = FileManager.default
         let possibleNames = [
             pkg.name,
@@ -1440,22 +1450,24 @@ struct PackageIconView: View {
             for name in possibleNames {
                 let appPath = "\(dir)/\(name).app"
                 if fileManager.fileExists(atPath: appPath) {
+                    Self.iconPathCache.setObject(appPath as NSString, forKey: pkg.id as NSString)
                     return NSWorkspace.shared.icon(forFile: appPath)
                 }
             }
         }
         
-        if let files = try? fileManager.contentsOfDirectory(atPath: "/Applications") {
-            for file in files {
-                if file.hasSuffix(".app") {
-                    let cleanAppName = file.replacingOccurrences(of: ".app", with: "").lowercased()
-                    let cleanPkgId = pkg.id.lowercased()
-                    let cleanPkgName = pkg.name.lowercased()
-                    
-                    if cleanAppName.contains(cleanPkgId) || cleanPkgId.contains(cleanAppName) ||
-                       cleanAppName.contains(cleanPkgName) || cleanPkgName.contains(cleanAppName) {
-                        return NSWorkspace.shared.icon(forFile: "/Applications/\(file)")
-                    }
+        // BOLT: Use cached directory listing to avoid redundant disk I/O on every icon resolution
+        for file in Self.applicationsCache {
+            if file.hasSuffix(".app") {
+                let cleanAppName = file.replacingOccurrences(of: ".app", with: "").lowercased()
+                let cleanPkgId = pkg.id.lowercased()
+                let cleanPkgName = pkg.name.lowercased()
+
+                if cleanAppName.contains(cleanPkgId) || cleanPkgId.contains(cleanAppName) ||
+                    cleanAppName.contains(cleanPkgName) || cleanPkgName.contains(cleanAppName) {
+                    let fullPath = "/Applications/\(file)"
+                    Self.iconPathCache.setObject(fullPath as NSString, forKey: pkg.id as NSString)
+                    return NSWorkspace.shared.icon(forFile: fullPath)
                 }
             }
         }
