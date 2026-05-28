@@ -2155,6 +2155,10 @@ struct DetailView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             } else {
                 ScrollView {
+                    // BOLT: Pre-calculate filtered and grouped packages once to avoid O(N*C) complexity
+                    let allFiltered = filteredPackages
+                    let grouped = Dictionary(grouping: allFiltered, by: { $0.category })
+
                     VStack(alignment: .leading, spacing: 20) {
                         if tab == .discover && searchQuery.isEmpty {
                             FeaturedCarouselSection(manager: manager, selectedPackage: $selectedPackage)
@@ -2173,10 +2177,8 @@ struct DetailView: View {
                                 // Skip hidden categories
                                 if manager.hiddenCategories.contains(category.rawValue) {
                                     EmptyView()
-                                } else {
-                                    let categoryPkgs = filteredPackages.filter { $0.category == category }
-                                    if !categoryPkgs.isEmpty {
-                                        VStack(alignment: .leading, spacing: 8) {
+                                } else if let categoryPkgs = grouped[category], !categoryPkgs.isEmpty {
+                                    VStack(alignment: .leading, spacing: 8) {
                                             HStack {
                                                 Image(systemName: category.icon)
                                                     .foregroundColor(.blue)
@@ -2220,7 +2222,6 @@ struct DetailView: View {
                                                 .frame(height: 95)
                                             }
                                         }
-                                    }
                                 }
                             }
                         }
@@ -2302,7 +2303,8 @@ struct DetailView: View {
     }
     
     var filteredPackages: [BrewPackage] {
-        manager.packages.filter { pkg in
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return manager.packages.filter { pkg in
             switch tab {
             case .casks:
                 if pkg.type != "cask" || pkg.installedVersion == nil { return false }
@@ -2317,11 +2319,11 @@ struct DetailView: View {
                 return false
             }
             
-            if !searchQuery.isEmpty {
-                let lower = searchQuery.lowercased()
-                return pkg.name.lowercased().contains(lower) ||
-                       pkg.id.lowercased().contains(lower) ||
-                       pkg.description.lowercased().contains(lower)
+            if !query.isEmpty {
+                // BOLT: Use localizedCaseInsensitiveContains for efficient, non-allocating search
+                return pkg.name.localizedCaseInsensitiveContains(query) ||
+                       pkg.id.localizedCaseInsensitiveContains(query) ||
+                       pkg.description.localizedCaseInsensitiveContains(query)
             }
             return true
         }
