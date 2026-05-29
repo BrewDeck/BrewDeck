@@ -2154,6 +2154,7 @@ struct DetailView: View {
                 .frame(maxHeight: .infinity, alignment: .center)
                 .frame(maxWidth: .infinity, alignment: .center)
             } else {
+                let groupedPackages = Dictionary(grouping: filteredPackages, by: { $0.category })
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if tab == .discover && searchQuery.isEmpty {
@@ -2174,7 +2175,7 @@ struct DetailView: View {
                                 if manager.hiddenCategories.contains(category.rawValue) {
                                     EmptyView()
                                 } else {
-                                    let categoryPkgs = filteredPackages.filter { $0.category == category }
+                                    let categoryPkgs = groupedPackages[category] ?? []
                                     if !categoryPkgs.isEmpty {
                                         VStack(alignment: .leading, spacing: 8) {
                                             HStack {
@@ -2318,10 +2319,9 @@ struct DetailView: View {
             }
             
             if !searchQuery.isEmpty {
-                let lower = searchQuery.lowercased()
-                return pkg.name.lowercased().contains(lower) ||
-                       pkg.id.lowercased().contains(lower) ||
-                       pkg.description.lowercased().contains(lower)
+                return pkg.name.localizedCaseInsensitiveContains(searchQuery) ||
+                       pkg.id.localizedCaseInsensitiveContains(searchQuery) ||
+                       pkg.description.localizedCaseInsensitiveContains(searchQuery)
             }
             return true
         }
