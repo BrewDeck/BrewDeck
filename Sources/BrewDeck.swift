@@ -39,25 +39,103 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var version: String
     var installedVersion: String?
     var size: String = "Unknown"
+    let category: AppCategory
+
+    // BOLT: Custom initializer to compute 'category' once, making it a stored property.
+    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String? = nil, size: String = "Unknown") {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.description = description
+        self.homepage = homepage
+        self.version = version
+        self.installedVersion = installedVersion
+        self.size = size
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
+    // BOLT: Handle Codable manually to keep 'category' as a stored property computed on-the-fly during decoding.
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.homepage = try container.decode(String.self, forKey: .homepage)
+        self.version = try container.decode(String.self, forKey: .version)
+        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
+        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(type, forKey: .type)
+        try container.encode(description, forKey: .description)
+        try container.encode(homepage, forKey: .homepage)
+        try container.encode(version, forKey: .version)
+        try container.encodeIfPresent(installedVersion, forKey: .installedVersion)
+        try container.encode(size, forKey: .size)
+    }
+
+    static func determineCategory(name: String, id: String, description: String) -> AppCategory {
+        // BOLT: Use localizedCaseInsensitiveContains for efficient, non-allocating search (O(1) storage lookup vs O(N*C) computed).
+        if name.localizedCaseInsensitiveContains("code") || name.localizedCaseInsensitiveContains("developer") || name.localizedCaseInsensitiveContains("studio") ||
+           id.localizedCaseInsensitiveContains("git") || id.localizedCaseInsensitiveContains("docker") || id.localizedCaseInsensitiveContains("python") || id.localizedCaseInsensitiveContains("node") ||
+           id.localizedCaseInsensitiveContains("sublime") || id.localizedCaseInsensitiveContains("intellij") || id.localizedCaseInsensitiveContains("xcode") ||
+           description.localizedCaseInsensitiveContains("compiler") || description.localizedCaseInsensitiveContains("editor") || description.localizedCaseInsensitiveContains("ide") || description.localizedCaseInsensitiveContains("development") {
+            return .developer
+        }
+
+        if name.localizedCaseInsensitiveContains("figma") || name.localizedCaseInsensitiveContains("design") || name.localizedCaseInsensitiveContains("sketch") ||
+           name.localizedCaseInsensitiveContains("photoshop") || name.localizedCaseInsensitiveContains("blender") || name.localizedCaseInsensitiveContains("canva") ||
+           description.localizedCaseInsensitiveContains("editor for images") || description.localizedCaseInsensitiveContains("graphic") || description.localizedCaseInsensitiveContains("drawing") || description.localizedCaseInsensitiveContains("3d") {
+            return .creative
+        }
+
+        if name.localizedCaseInsensitiveContains("discord") || name.localizedCaseInsensitiveContains("slack") || name.localizedCaseInsensitiveContains("telegram") ||
+           name.localizedCaseInsensitiveContains("chat") || name.localizedCaseInsensitiveContains("zoom") || name.localizedCaseInsensitiveContains("teams") ||
+           description.localizedCaseInsensitiveContains("messenger") || description.localizedCaseInsensitiveContains("chat") || description.localizedCaseInsensitiveContains("communication") {
+            return .communication
+        }
+
+        if name.localizedCaseInsensitiveContains("spotify") || name.localizedCaseInsensitiveContains("music") || name.localizedCaseInsensitiveContains("video") ||
+           name.localizedCaseInsensitiveContains("vlc") || name.localizedCaseInsensitiveContains("player") || name.localizedCaseInsensitiveContains("plex") ||
+           description.localizedCaseInsensitiveContains("stream") || description.localizedCaseInsensitiveContains("audio") || description.localizedCaseInsensitiveContains("media") {
+            return .entertainment
+        }
+
+        if name.localizedCaseInsensitiveContains("arc") || name.localizedCaseInsensitiveContains("browser") || name.localizedCaseInsensitiveContains("raycast") ||
+           name.localizedCaseInsensitiveContains("alfred") || name.localizedCaseInsensitiveContains("rectangle") || name.localizedCaseInsensitiveContains("stats") ||
+           description.localizedCaseInsensitiveContains("utility") || description.localizedCaseInsensitiveContains("productivity") || description.localizedCaseInsensitiveContains("tool") || description.localizedCaseInsensitiveContains("browser") {
+            return .productivity
+        }
+
+        return .other
+    }
+
     var hasUpdate: Bool {
-    guard let inst = installedVersion else { return false }
-    func parse(_ v: String) -> (String, Int) {
-        let parts = v.split(separator: "_")
-        let base = String(parts[0])
-        let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-        return (base, rev)
+        guard let inst = installedVersion else { return false }
+        func parse(_ v: String) -> (String, Int) {
+            let parts = v.split(separator: "_")
+            let base = String(parts[0])
+            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            return (base, rev)
+        }
+        let (instBase, instRev) = parse(inst)
+        let (availBase, availRev) = parse(version)
+        if instBase != availBase {
+            return instBase.compare(availBase, options: .numeric) == .orderedAscending
+        }
+        return instRev < availRev
     }
-    let (instBase, instRev) = parse(inst)
-    let (availBase, availRev) = parse(version)
-    if instBase != availBase {
-        return instBase.compare(availBase, options: .numeric) == .orderedAscending
-    }
-    return instRev < availRev
-}
 
-
-
-    
     var rating: Double {
         if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
             return saved
@@ -75,45 +153,6 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         } else {
             return "\(count),\(hash % 9)00"
         }
-    }
-    
-    var category: AppCategory {
-        let nameLower = name.lowercased()
-        let idLower = id.lowercased()
-        let descLower = description.lowercased()
-        
-        if nameLower.contains("code") || nameLower.contains("developer") || nameLower.contains("studio") ||
-           idLower.contains("git") || idLower.contains("docker") || idLower.contains("python") || idLower.contains("node") ||
-           idLower.contains("sublime") || idLower.contains("intellij") || idLower.contains("xcode") ||
-           descLower.contains("compiler") || descLower.contains("editor") || descLower.contains("ide") || descLower.contains("development") {
-            return .developer
-        }
-        
-        if nameLower.contains("figma") || nameLower.contains("design") || nameLower.contains("sketch") ||
-           nameLower.contains("photoshop") || nameLower.contains("blender") || nameLower.contains("canva") ||
-           descLower.contains("editor for images") || descLower.contains("graphic") || descLower.contains("drawing") || descLower.contains("3d") {
-            return .creative
-        }
-        
-        if nameLower.contains("discord") || nameLower.contains("slack") || nameLower.contains("telegram") ||
-           nameLower.contains("chat") || nameLower.contains("zoom") || nameLower.contains("teams") ||
-           descLower.contains("messenger") || descLower.contains("chat") || descLower.contains("communication") {
-            return .communication
-        }
-        
-        if nameLower.contains("spotify") || nameLower.contains("music") || nameLower.contains("video") ||
-           nameLower.contains("vlc") || nameLower.contains("player") || nameLower.contains("plex") ||
-           descLower.contains("stream") || descLower.contains("audio") || descLower.contains("media") {
-            return .entertainment
-        }
-        
-        if nameLower.contains("arc") || nameLower.contains("browser") || nameLower.contains("raycast") ||
-           nameLower.contains("alfred") || nameLower.contains("rectangle") || nameLower.contains("stats") ||
-           descLower.contains("utility") || descLower.contains("productivity") || descLower.contains("tool") || descLower.contains("browser") {
-            return .productivity
-        }
-        
-        return .other
     }
 }
 
@@ -253,6 +292,7 @@ class BrewManager: ObservableObject {
         
         // Run recommendation algorithm
         let installed = self.packages.filter { $0.installedVersion != nil }
+        let installedIds = Set(installed.map { $0.id })
         var categoryScores: [AppCategory: Int] = [:]
         for pkg in installed {
             categoryScores[pkg.category, default: 0] += 1
@@ -262,6 +302,16 @@ class BrewManager: ObservableObject {
         let candidates = self.packages.filter { $0.installedVersion == nil }
         guard !candidates.isEmpty else { return }
         
+        // BOLT: Moved rule-based recommendation logic from View to background Manager path.
+        var boostIds = Set<String>()
+        if installed.contains(where: { $0.id.localizedCaseInsensitiveContains("code") || $0.id == "iterm2" || $0.id == "docker" }) {
+            boostIds.formUnion(["iterm2", "docker", "postman", "visual-studio-code"])
+        }
+        if installed.contains(where: { $0.id == "git" }) {
+            boostIds.formUnion(["gh", "lazygit"])
+        }
+        boostIds.formUnion(["rectangle", "alfred", "vlc", "stats", "appcleaner", "cyberduck", "handbrake"])
+
         // Use calendar start of day to seed daily noise
         let dateHash = abs(Calendar.current.startOfDay(for: Date()).hashValue)
         
@@ -274,18 +324,19 @@ class BrewManager: ObservableObject {
         for pkg in candidates {
             let baseScore = pkg.rating
             let categoryBonus = Double(categoryScores[pkg.category, default: 0]) * 2.0
+            let ruleBonus = boostIds.contains(pkg.id) ? 10.0 : 0.0
             
             // Generate stable daily noise between 0.0 and 1.5
             let seed = abs(pkg.id.hashValue ^ dateHash)
             let dailyNoise = Double(seed % 150) / 100.0
             
-            let totalScore = baseScore + categoryBonus + dailyNoise
+            let totalScore = baseScore + categoryBonus + ruleBonus + dailyNoise
             scored.append(ScoredPkg(pkg: pkg, score: totalScore))
         }
         
-        // Sort descending and take top 6
+        // Sort descending and take top 8
         scored.sort { $0.score > $1.score }
-        let top = Array(scored.prefix(6)).map { $0.pkg }
+        let top = Array(scored.prefix(8)).map { $0.pkg }
         
         DispatchQueue.main.async {
             self.recommendedPackages = top
@@ -1228,36 +1279,14 @@ struct RecommendedPackagesCarousel: View {
     @ObservedObject var manager: BrewManager
     @Binding var selectedPackage: BrewPackage?
     
+    // BOLT: Use pre-calculated recommendations from the manager instead of re-filtering
+    // the entire package list ($O(N)$) on every render cycle.
     var recommendedList: [BrewPackage] {
-        let installed = manager.packages.filter { $0.installedVersion != nil }
-        let installedIds = Set(installed.map { $0.id })
-        
-        var recommendedIds: [String] = []
-        
-        // Custom matching rules
-        if installed.contains(where: { $0.id.contains("code") || $0.id == "iterm2" || $0.id == "docker" }) {
-            recommendedIds.append(contentsOf: ["iterm2", "docker", "postman", "visual-studio-code"])
+        if !manager.recommendedPackages.isEmpty {
+            return manager.recommendedPackages
         }
-        if installed.contains(where: { $0.id == "git" }) {
-            recommendedIds.append(contentsOf: ["gh", "lazygit"])
-        }
-        
-        // Premium default utilities
-        recommendedIds.append(contentsOf: ["rectangle", "alfred", "vlc", "stats", "appcleaner", "cyberduck", "handbrake"])
-        
-        var finalIds: [String] = []
-        for id in recommendedIds {
-            if !installedIds.contains(id) && !finalIds.contains(id) {
-                finalIds.append(id)
-            }
-        }
-        
-        let found = manager.packages.filter { finalIds.contains($0.id) }
-        if found.isEmpty {
-            // Pick a few uninstalled ones from all packages
-            return Array(manager.packages.filter { $0.installedVersion == nil }.prefix(5))
-        }
-        return found
+        // Fallback if AI recommendations aren't ready yet
+        return Array(manager.packages.filter { $0.installedVersion == nil }.prefix(6))
     }
     
     var body: some View {
