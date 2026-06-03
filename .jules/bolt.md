@@ -7,3 +7,7 @@
 ## 2024-05-28 - [Optimizing Render Loop Complexity]
 **Learning:** In SwiftUI views with large collections, performing `.filter` inside a `ForEach` that iterates over categories creates $O(N \times C)$ complexity. This causes significant frame drops when scrolling or searching through thousands of packages.
 **Action:** Pre-calculate a grouped dictionary using `Dictionary(grouping:by:)` before the `body` loop to reduce complexity to $O(N)$ and ensure $O(1)$ lookups during rendering.
+
+## 2026-06-03 - [Centralizing Recommendation Logic]
+**Learning:** Moving complex recommendation filtering and matching rules from a SwiftUI view's computed property into an ObservableObject's state-update path removes O(N) overhead from the render loop. Combining rule-based recommendations with a scored candidate list ensures a consistent user experience without frame drops.
+**Action:** Always move data-heavy filtering or sorting logic out of SwiftUI views and into a dedicated state manager where results can be cached or computed as needed.
