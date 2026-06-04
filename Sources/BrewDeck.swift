@@ -39,6 +39,37 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var version: String
     var installedVersion: String?
     var size: String = "Unknown"
+    let category: AppCategory
+
+    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String? = nil, size: String = "Unknown") {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.description = description
+        self.homepage = homepage
+        self.version = version
+        self.installedVersion = installedVersion
+        self.size = size
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.homepage = try container.decode(String.self, forKey: .homepage)
+        self.version = try container.decode(String.self, forKey: .version)
+        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
+        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
     var hasUpdate: Bool {
     guard let inst = installedVersion else { return false }
     func parse(_ v: String) -> (String, Int) {
@@ -77,44 +108,41 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         }
     }
     
-    var category: AppCategory {
-        let nameLower = name.lowercased()
-        let idLower = id.lowercased()
-        let descLower = description.lowercased()
-        
-        if nameLower.contains("code") || nameLower.contains("developer") || nameLower.contains("studio") ||
-           idLower.contains("git") || idLower.contains("docker") || idLower.contains("python") || idLower.contains("node") ||
-           idLower.contains("sublime") || idLower.contains("intellij") || idLower.contains("xcode") ||
-           descLower.contains("compiler") || descLower.contains("editor") || descLower.contains("ide") || descLower.contains("development") {
+    static func determineCategory(name: String, id: String, description: String) -> AppCategory {
+        if name.localizedCaseInsensitiveContains("code") || name.localizedCaseInsensitiveContains("developer") || name.localizedCaseInsensitiveContains("studio") ||
+           id.localizedCaseInsensitiveContains("git") || id.localizedCaseInsensitiveContains("docker") || id.localizedCaseInsensitiveContains("python") || id.localizedCaseInsensitiveContains("node") ||
+           id.localizedCaseInsensitiveContains("sublime") || id.localizedCaseInsensitiveContains("intellij") || id.localizedCaseInsensitiveContains("xcode") ||
+           description.localizedCaseInsensitiveContains("compiler") || description.localizedCaseInsensitiveContains("editor") || description.localizedCaseInsensitiveContains("ide") || description.localizedCaseInsensitiveContains("development") {
             return .developer
         }
         
-        if nameLower.contains("figma") || nameLower.contains("design") || nameLower.contains("sketch") ||
-           nameLower.contains("photoshop") || nameLower.contains("blender") || nameLower.contains("canva") ||
-           descLower.contains("editor for images") || descLower.contains("graphic") || descLower.contains("drawing") || descLower.contains("3d") {
+        if name.localizedCaseInsensitiveContains("figma") || name.localizedCaseInsensitiveContains("design") || name.localizedCaseInsensitiveContains("sketch") ||
+           name.localizedCaseInsensitiveContains("photoshop") || name.localizedCaseInsensitiveContains("blender") || name.localizedCaseInsensitiveContains("canva") ||
+           description.localizedCaseInsensitiveContains("editor for images") || description.localizedCaseInsensitiveContains("graphic") || description.localizedCaseInsensitiveContains("drawing") || description.localizedCaseInsensitiveContains("3d") {
             return .creative
         }
         
-        if nameLower.contains("discord") || nameLower.contains("slack") || nameLower.contains("telegram") ||
-           nameLower.contains("chat") || nameLower.contains("zoom") || nameLower.contains("teams") ||
-           descLower.contains("messenger") || descLower.contains("chat") || descLower.contains("communication") {
+        if name.localizedCaseInsensitiveContains("discord") || name.localizedCaseInsensitiveContains("slack") || name.localizedCaseInsensitiveContains("telegram") ||
+           name.localizedCaseInsensitiveContains("chat") || name.localizedCaseInsensitiveContains("zoom") || name.localizedCaseInsensitiveContains("teams") ||
+           description.localizedCaseInsensitiveContains("messenger") || description.localizedCaseInsensitiveContains("chat") || description.localizedCaseInsensitiveContains("communication") {
             return .communication
         }
         
-        if nameLower.contains("spotify") || nameLower.contains("music") || nameLower.contains("video") ||
-           nameLower.contains("vlc") || nameLower.contains("player") || nameLower.contains("plex") ||
-           descLower.contains("stream") || descLower.contains("audio") || descLower.contains("media") {
+        if name.localizedCaseInsensitiveContains("spotify") || name.localizedCaseInsensitiveContains("music") || name.localizedCaseInsensitiveContains("video") ||
+           name.localizedCaseInsensitiveContains("vlc") || name.localizedCaseInsensitiveContains("player") || name.localizedCaseInsensitiveContains("plex") ||
+           description.localizedCaseInsensitiveContains("stream") || description.localizedCaseInsensitiveContains("audio") || description.localizedCaseInsensitiveContains("media") {
             return .entertainment
         }
         
-        if nameLower.contains("arc") || nameLower.contains("browser") || nameLower.contains("raycast") ||
-           nameLower.contains("alfred") || nameLower.contains("rectangle") || nameLower.contains("stats") ||
-           descLower.contains("utility") || descLower.contains("productivity") || descLower.contains("tool") || descLower.contains("browser") {
+        if name.localizedCaseInsensitiveContains("arc") || name.localizedCaseInsensitiveContains("browser") || name.localizedCaseInsensitiveContains("raycast") ||
+           name.localizedCaseInsensitiveContains("alfred") || name.localizedCaseInsensitiveContains("rectangle") || name.localizedCaseInsensitiveContains("stats") ||
+           description.localizedCaseInsensitiveContains("utility") || description.localizedCaseInsensitiveContains("productivity") || description.localizedCaseInsensitiveContains("tool") || description.localizedCaseInsensitiveContains("browser") {
             return .productivity
         }
         
         return .other
     }
+
 }
 
 enum AppCategory: String, CaseIterable, Identifiable, Codable {
