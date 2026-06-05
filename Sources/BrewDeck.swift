@@ -2249,6 +2249,7 @@ struct DetailView: View {
                 .frame(maxHeight: .infinity, alignment: .center)
                 .frame(maxWidth: .infinity, alignment: .center)
             } else {
+                let groupedPackages = Dictionary(grouping: filteredPackages, by: { $0.category })
                 ScrollView {
                     // BOLT: Pre-calculate filtered and grouped packages once to avoid O(N*C) complexity
                     let allFiltered = filteredPackages
