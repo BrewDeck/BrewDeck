@@ -86,9 +86,51 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     return instRev < availRev
 }
 
+    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String? = nil, size: String = "Unknown") {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.description = description
+        self.homepage = homepage
+        self.version = version
+        self.installedVersion = installedVersion
+        self.size = size
+        self.category = BrewPackage.determineCategory(name: name, id: id, description: description)
+    }
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
 
-    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.homepage = try container.decode(String.self, forKey: .homepage)
+        self.version = try container.decode(String.self, forKey: .version)
+        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
+        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
+        self.category = BrewPackage.determineCategory(name: name, id: id, description: description)
+    }
+
+    var hasUpdate: Bool {
+        guard let inst = installedVersion else { return false }
+        func parse(_ v: String) -> (String, Int) {
+            let parts = v.split(separator: "_")
+            let base = String(parts[0])
+            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            return (base, rev)
+        }
+        let (instBase, instRev) = parse(inst)
+        let (availBase, availRev) = parse(version)
+        if instBase != availBase {
+            return instBase.compare(availBase, options: .numeric) == .orderedAscending
+        }
+        return instRev < availRev
+    }
+
     var rating: Double {
         if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
             return saved
@@ -109,6 +151,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     }
     
     static func determineCategory(name: String, id: String, description: String) -> AppCategory {
+        // BOLT: Use localizedCaseInsensitiveContains for efficient search without redundant lowercased string allocations.
     let category: AppCategory
 
     enum CodingKeys: String, CodingKey {
@@ -346,6 +389,10 @@ class BrewManager: ObservableObject {
         }
         
         var scored: [ScoredPkg] = []
+        let premiumIds: Set<String> = ["rectangle", "alfred", "vlc", "stats", "appcleaner", "cyberduck", "handbrake"]
+        let devIds: Set<String> = ["iterm2", "docker", "postman", "visual-studio-code", "gh", "lazygit"]
+        let hasDevInstalled = installed.contains { $0.id.localizedCaseInsensitiveContains("code") || $0.id == "iterm2" || $0.id == "docker" || $0.id == "git" }
+
         for pkg in candidates {
             let baseScore = pkg.rating
             let categoryBonus = Double(categoryScores[pkg.category, default: 0]) * 2.0
@@ -362,9 +409,9 @@ class BrewManager: ObservableObject {
             scored.append(ScoredPkg(pkg: pkg, score: totalScore))
         }
         
-        // Sort descending and take top 6
+        // Sort descending and take top 8
         scored.sort { $0.score > $1.score }
-        let top = Array(scored.prefix(6)).map { $0.pkg }
+        let top = Array(scored.prefix(8)).map { $0.pkg }
         
         DispatchQueue.main.async {
             self.recommendedPackages = top
