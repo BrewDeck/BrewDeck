@@ -39,6 +39,37 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var version: String
     var installedVersion: String?
     var size: String = "Unknown"
+    let category: AppCategory
+
+    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String? = nil, size: String = "Unknown") {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.description = description
+        self.homepage = homepage
+        self.version = version
+        self.installedVersion = installedVersion
+        self.size = size
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.homepage = try container.decode(String.self, forKey: .homepage)
+        self.version = try container.decode(String.self, forKey: .version)
+        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
+        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
     var hasUpdate: Bool {
     guard let inst = installedVersion else { return false }
     func parse(_ v: String) -> (String, Int) {
@@ -77,6 +108,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         }
     }
     
+    static func determineCategory(name: String, id: String, description: String) -> AppCategory {
     let category: AppCategory
 
     enum CodingKeys: String, CodingKey {
@@ -143,6 +175,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         
         return .other
     }
+
 }
 
 enum AppCategory: String, CaseIterable, Identifiable, Codable {
