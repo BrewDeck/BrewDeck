@@ -50,6 +50,51 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.version = version
         self.installedVersion = installedVersion
         self.size = size
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.homepage = try container.decode(String.self, forKey: .homepage)
+        self.version = try container.decode(String.self, forKey: .version)
+        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
+        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
+        self.category = Self.determineCategory(name: name, id: id, description: description)
+    }
+
+    var hasUpdate: Bool {
+    guard let inst = installedVersion else { return false }
+    func parse(_ v: String) -> (String, Int) {
+        let parts = v.split(separator: "_")
+        let base = String(parts[0])
+        let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+        return (base, rev)
+    }
+    let (instBase, instRev) = parse(inst)
+    let (availBase, availRev) = parse(version)
+    if instBase != availBase {
+        return instBase.compare(availBase, options: .numeric) == .orderedAscending
+    }
+    return instRev < availRev
+}
+
+    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String? = nil, size: String = "Unknown") {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.description = description
+        self.homepage = homepage
+        self.version = version
+        self.installedVersion = installedVersion
+        self.size = size
         self.category = BrewPackage.determineCategory(name: name, id: id, description: description)
     }
 
@@ -107,6 +152,39 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     
     static func determineCategory(name: String, id: String, description: String) -> AppCategory {
         // BOLT: Use localizedCaseInsensitiveContains for efficient search without redundant lowercased string allocations.
+    let category: AppCategory
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
+
+    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String?, size: String = "Unknown") {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.description = description
+        self.homepage = homepage
+        self.version = version
+        self.installedVersion = installedVersion
+        self.size = size
+        self.category = BrewPackage.determineCategory(name: name, id: id, description: description)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.homepage = try container.decode(String.self, forKey: .homepage)
+        self.version = try container.decode(String.self, forKey: .version)
+        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
+        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
+        self.category = BrewPackage.determineCategory(name: self.name, id: self.id, description: self.description)
+    }
+
+    static func determineCategory(name: String, id: String, description: String) -> AppCategory {
+        // BOLT: Use localizedCaseInsensitiveContains for efficient, non-allocating search
         if name.localizedCaseInsensitiveContains("code") || name.localizedCaseInsensitiveContains("developer") || name.localizedCaseInsensitiveContains("studio") ||
            id.localizedCaseInsensitiveContains("git") || id.localizedCaseInsensitiveContains("docker") || id.localizedCaseInsensitiveContains("python") || id.localizedCaseInsensitiveContains("node") ||
            id.localizedCaseInsensitiveContains("sublime") || id.localizedCaseInsensitiveContains("intellij") || id.localizedCaseInsensitiveContains("xcode") ||
@@ -140,6 +218,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         
         return .other
     }
+
 }
 
 enum AppCategory: String, CaseIterable, Identifiable, Codable {
@@ -276,15 +355,29 @@ class BrewManager: ObservableObject {
             }
         }
         
-        // Run recommendation algorithm
+        // BOLT: Centralized recommendation algorithm to avoid O(N) calculations in the view's render path.
         let installed = self.packages.filter { $0.installedVersion != nil }
+        let installedIds = Set(installed.map { $0.id })
+
         var categoryScores: [AppCategory: Int] = [:]
         for pkg in installed {
             categoryScores[pkg.category, default: 0] += 1
         }
         
+        // Specific dependency-based bonuses
+        var bonusIds: Set<String> = []
+        if installed.contains(where: { $0.id.contains("code") || $0.id == "iterm2" || $0.id == "docker" }) {
+            bonusIds.formUnion(["iterm2", "docker", "postman", "visual-studio-code"])
+        }
+        if installed.contains(where: { $0.id == "git" }) {
+            bonusIds.formUnion(["gh", "lazygit"])
+        }
+
+        // Premium utility bonuses
+        let premiumIds: Set<String> = ["rectangle", "alfred", "vlc", "stats", "appcleaner", "cyberduck", "handbrake"]
+
         // Filter out already installed packages
-        let candidates = self.packages.filter { $0.installedVersion == nil }
+        let candidates = self.packages.filter { !installedIds.contains($0.id) }
         guard !candidates.isEmpty else { return }
         
         // Use calendar start of day to seed daily noise
@@ -304,16 +397,15 @@ class BrewManager: ObservableObject {
             let baseScore = pkg.rating
             let categoryBonus = Double(categoryScores[pkg.category, default: 0]) * 2.0
             
-            // BOLT: Incorporate premium and developer tool bonuses into the background scoring engine.
-            var contextBonus = 0.0
-            if premiumIds.contains(pkg.id) { contextBonus += 3.0 }
-            if hasDevInstalled && devIds.contains(pkg.id) { contextBonus += 4.0 }
+            // Add specific bonuses for related or premium apps
+            let relationBonus = bonusIds.contains(pkg.id) ? 5.0 : 0.0
+            let premiumBonus = premiumIds.contains(pkg.id) ? 3.0 : 0.0
 
             // Generate stable daily noise between 0.0 and 1.5
             let seed = abs(pkg.id.hashValue ^ dateHash)
             let dailyNoise = Double(seed % 150) / 100.0
             
-            let totalScore = baseScore + categoryBonus + contextBonus + dailyNoise
+            let totalScore = baseScore + categoryBonus + relationBonus + premiumBonus + dailyNoise
             scored.append(ScoredPkg(pkg: pkg, score: totalScore))
         }
         
@@ -1275,7 +1367,7 @@ struct RecommendedPackagesCarousel: View {
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
-                    // BOLT: Use pre-calculated background recommendations to avoid O(N) overhead in render path.
+                    // BOLT: Use pre-calculated recommendations from the manager to avoid O(N) overhead during render.
                     ForEach(manager.recommendedPackages) { pkg in
                         PackageCardView(pkg: pkg, manager: manager, action: {
                             selectedPackage = pkg
