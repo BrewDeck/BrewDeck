@@ -39,25 +39,53 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var version: String
     var installedVersion: String?
     var size: String = "Unknown"
+    let category: AppCategory
+
     var hasUpdate: Bool {
-    guard let inst = installedVersion else { return false }
-    func parse(_ v: String) -> (String, Int) {
-        let parts = v.split(separator: "_")
-        let base = String(parts[0])
-        let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-        return (base, rev)
+        guard let inst = installedVersion else { return false }
+        func parse(_ v: String) -> (String, Int) {
+            let parts = v.split(separator: "_")
+            let base = String(parts[0])
+            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            return (base, rev)
+        }
+        let (instBase, instRev) = parse(inst)
+        let (availBase, availRev) = parse(version)
+        if instBase != availBase {
+            return instBase.compare(availBase, options: .numeric) == .orderedAscending
+        }
+        return instRev < availRev
     }
-    let (instBase, instRev) = parse(inst)
-    let (availBase, availRev) = parse(version)
-    if instBase != availBase {
-        return instBase.compare(availBase, options: .numeric) == .orderedAscending
+
+    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String?, size: String = "Unknown") {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.description = description
+        self.homepage = homepage
+        self.version = version
+        self.installedVersion = installedVersion
+        self.size = size
+        self.category = Self.determineCategory(name: name, id: id, description: description)
     }
-    return instRev < availRev
-}
 
-
-
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
     
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.homepage = try container.decode(String.self, forKey: .homepage)
+        self.version = try container.decode(String.self, forKey: .version)
+        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
+        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
+        self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
+    }
+
     var rating: Double {
         if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
             return saved
@@ -77,6 +105,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         }
     }
     
+    static func determineCategory(name: String, id: String, description: String) -> AppCategory {
     let category: AppCategory
 
     enum CodingKeys: String, CodingKey {
@@ -2447,7 +2476,7 @@ struct BottomConsoleSection: View {
     func logColor(_ line: String) -> Color {
         if line.hasPrefix("==>") { return .blue }
         if line.hasPrefix("🍺") { return .green }
-        if line.hasPrefix("Error:") || line.lowercased().contains("failed") { return .red }
+        if line.hasPrefix("Error:") || line.localizedCaseInsensitiveContains("failed") { return .red }
         return .primary
     }
 }
