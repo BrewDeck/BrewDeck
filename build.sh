@@ -24,10 +24,10 @@ else
 fi
 # Create a local module cache to avoid sandbox writes
 mkdir -p ModuleCache
-# Compile with chosen SDK and custom module cache (Bumped target to macos26.0)
+# Compile with chosen SDK and custom module cache (Quotes added to fix spaces)
 swiftc -parse-as-library Sources/BrewDeck.swift \
   -sdk "$SDK_PATH" \
-  -module-cache-path $(pwd)/ModuleCache \
+  -module-cache-path "$(pwd)/ModuleCache" \
   -target arm64-apple-macos26.0 \
   -framework SwiftUI \
   -framework AppKit \
