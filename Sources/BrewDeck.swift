@@ -41,6 +41,10 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var size: String = "Unknown"
     let category: AppCategory
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description, homepage, version, installedVersion, size
+    }
+
     init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String? = nil, size: String = "Unknown") {
         self.id = id
         self.name = name
@@ -53,10 +57,6 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.category = Self.determineCategory(name: name, id: id, description: description)
     }
 
-    enum CodingKeys: String, CodingKey {
-        case id, name, type, description, homepage, version, installedVersion, size
-    }
-
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
@@ -67,52 +67,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.version = try container.decode(String.self, forKey: .version)
         self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
         self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
-        self.category = Self.determineCategory(name: name, id: id, description: description)
-    }
-
-    var hasUpdate: Bool {
-    guard let inst = installedVersion else { return false }
-    func parse(_ v: String) -> (String, Int) {
-        let parts = v.split(separator: "_")
-        let base = String(parts[0])
-        let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-        return (base, rev)
-    }
-    let (instBase, instRev) = parse(inst)
-    let (availBase, availRev) = parse(version)
-    if instBase != availBase {
-        return instBase.compare(availBase, options: .numeric) == .orderedAscending
-    }
-    return instRev < availRev
-}
-
-    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String? = nil, size: String = "Unknown") {
-        self.id = id
-        self.name = name
-        self.type = type
-        self.description = description
-        self.homepage = homepage
-        self.version = version
-        self.installedVersion = installedVersion
-        self.size = size
-        self.category = BrewPackage.determineCategory(name: name, id: id, description: description)
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id, name, type, description, homepage, version, installedVersion, size
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(String.self, forKey: .id)
-        self.name = try container.decode(String.self, forKey: .name)
-        self.type = try container.decode(String.self, forKey: .type)
-        self.description = try container.decode(String.self, forKey: .description)
-        self.homepage = try container.decode(String.self, forKey: .homepage)
-        self.version = try container.decode(String.self, forKey: .version)
-        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
-        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
-        self.category = BrewPackage.determineCategory(name: name, id: id, description: description)
+        self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
     }
 
     var hasUpdate: Bool {
@@ -151,40 +106,6 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     }
     
     static func determineCategory(name: String, id: String, description: String) -> AppCategory {
-        // BOLT: Use localizedCaseInsensitiveContains for efficient search without redundant lowercased string allocations.
-    let category: AppCategory
-
-    enum CodingKeys: String, CodingKey {
-        case id, name, type, description, homepage, version, installedVersion, size
-    }
-
-    init(id: String, name: String, type: String, description: String, homepage: String, version: String, installedVersion: String?, size: String = "Unknown") {
-        self.id = id
-        self.name = name
-        self.type = type
-        self.description = description
-        self.homepage = homepage
-        self.version = version
-        self.installedVersion = installedVersion
-        self.size = size
-        self.category = BrewPackage.determineCategory(name: name, id: id, description: description)
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(String.self, forKey: .id)
-        self.name = try container.decode(String.self, forKey: .name)
-        self.type = try container.decode(String.self, forKey: .type)
-        self.description = try container.decode(String.self, forKey: .description)
-        self.homepage = try container.decode(String.self, forKey: .homepage)
-        self.version = try container.decode(String.self, forKey: .version)
-        self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
-        self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
-        self.category = BrewPackage.determineCategory(name: self.name, id: self.id, description: self.description)
-    }
-
-    static func determineCategory(name: String, id: String, description: String) -> AppCategory {
-        // BOLT: Use localizedCaseInsensitiveContains for efficient, non-allocating search
         if name.localizedCaseInsensitiveContains("code") || name.localizedCaseInsensitiveContains("developer") || name.localizedCaseInsensitiveContains("studio") ||
            id.localizedCaseInsensitiveContains("git") || id.localizedCaseInsensitiveContains("docker") || id.localizedCaseInsensitiveContains("python") || id.localizedCaseInsensitiveContains("node") ||
            id.localizedCaseInsensitiveContains("sublime") || id.localizedCaseInsensitiveContains("intellij") || id.localizedCaseInsensitiveContains("xcode") ||
@@ -218,7 +139,6 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         
         return .other
     }
-
 }
 
 enum AppCategory: String, CaseIterable, Identifiable, Codable {
@@ -342,7 +262,6 @@ class BrewManager: ObservableObject {
         let lastTime = UserDefaults.standard.double(forKey: "recommendation_timestamp")
         
         if !force && (now - lastTime < 86400) {
-            // Load from cache
             if let storedIds = UserDefaults.standard.stringArray(forKey: "recommended_package_ids") {
                 let cached = self.packages.filter { storedIds.contains($0.id) }
                 if !cached.isEmpty {
@@ -355,7 +274,6 @@ class BrewManager: ObservableObject {
             }
         }
         
-        // BOLT: Centralized recommendation algorithm to avoid O(N) calculations in the view's render path.
         let installed = self.packages.filter { $0.installedVersion != nil }
         let installedIds = Set(installed.map { $0.id })
 
@@ -364,7 +282,6 @@ class BrewManager: ObservableObject {
             categoryScores[pkg.category, default: 0] += 1
         }
         
-        // Specific dependency-based bonuses
         var bonusIds: Set<String> = []
         if installed.contains(where: { $0.id.contains("code") || $0.id == "iterm2" || $0.id == "docker" }) {
             bonusIds.formUnion(["iterm2", "docker", "postman", "visual-studio-code"])
@@ -373,14 +290,9 @@ class BrewManager: ObservableObject {
             bonusIds.formUnion(["gh", "lazygit"])
         }
 
-        // Premium utility bonuses
-        let premiumIds: Set<String> = ["rectangle", "alfred", "vlc", "stats", "appcleaner", "cyberduck", "handbrake"]
-
-        // Filter out already installed packages
         let candidates = self.packages.filter { !installedIds.contains($0.id) }
         guard !candidates.isEmpty else { return }
         
-        // Use calendar start of day to seed daily noise
         let dateHash = abs(Calendar.current.startOfDay(for: Date()).hashValue)
         
         struct ScoredPkg {
@@ -390,18 +302,14 @@ class BrewManager: ObservableObject {
         
         var scored: [ScoredPkg] = []
         let premiumIds: Set<String> = ["rectangle", "alfred", "vlc", "stats", "appcleaner", "cyberduck", "handbrake"]
-        let devIds: Set<String> = ["iterm2", "docker", "postman", "visual-studio-code", "gh", "lazygit"]
-        let hasDevInstalled = installed.contains { $0.id.localizedCaseInsensitiveContains("code") || $0.id == "iterm2" || $0.id == "docker" || $0.id == "git" }
 
         for pkg in candidates {
             let baseScore = pkg.rating
             let categoryBonus = Double(categoryScores[pkg.category, default: 0]) * 2.0
             
-            // Add specific bonuses for related or premium apps
             let relationBonus = bonusIds.contains(pkg.id) ? 5.0 : 0.0
             let premiumBonus = premiumIds.contains(pkg.id) ? 3.0 : 0.0
 
-            // Generate stable daily noise between 0.0 and 1.5
             let seed = abs(pkg.id.hashValue ^ dateHash)
             let dailyNoise = Double(seed % 150) / 100.0
             
@@ -409,7 +317,6 @@ class BrewManager: ObservableObject {
             scored.append(ScoredPkg(pkg: pkg, score: totalScore))
         }
         
-        // Sort descending and take top 8
         scored.sort { $0.score > $1.score }
         let top = Array(scored.prefix(8)).map { $0.pkg }
         
@@ -417,14 +324,12 @@ class BrewManager: ObservableObject {
             self.recommendedPackages = top
         }
         
-        // Save to cache
         let topIds = top.map { $0.id }
         UserDefaults.standard.set(topIds, forKey: "recommended_package_ids")
         UserDefaults.standard.set(now, forKey: "recommendation_timestamp")
         logDebug("Calculated new personalized recommendations. Recommended: \(topIds)")
     }
     
-    // For mid-execution sudo password popups
     @Published var isSudoModalOpen: Bool = false
     @Published var sudoInputPassword: String = ""
     @Published var cachedPassword: String = ""
@@ -475,7 +380,6 @@ class BrewManager: ObservableObject {
     func openApp(pkg: BrewPackage) {
         logDebug("Attempting to open app: \(pkg.name)")
         
-        // Try the standard path first: /Applications/Name.app
         let appPath = "/Applications/\(pkg.name).app"
         if FileManager.default.fileExists(atPath: appPath) {
             let url = URL(fileURLWithPath: appPath)
@@ -485,7 +389,6 @@ class BrewManager: ObservableObject {
             }
         }
         
-        // Try user applications: ~/Applications/Name.app
         let userAppPath = "\(NSHomeDirectory())/Applications/\(pkg.name).app"
         if FileManager.default.fileExists(atPath: userAppPath) {
             let url = URL(fileURLWithPath: userAppPath)
@@ -495,7 +398,6 @@ class BrewManager: ObservableObject {
             }
         }
         
-        // Fallback: spawn terminal open command
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         proc.arguments = ["-a", pkg.name]
@@ -511,7 +413,6 @@ class BrewManager: ObservableObject {
         if let stored = UserDefaults.standard.stringArray(forKey: "hidden_categories") {
             self.hiddenCategories = Set(stored)
         }
-        // Hydrate with local first, then fetch online registry
         loadLocalPackages()
         fetchOnlineCasks()
     }
@@ -727,13 +628,11 @@ class BrewManager: ObservableObject {
                 DispatchQueue.main.async {
                     thread.logs.append(line)
                     
-                    // Inspect logs for sudo prompts
                     let lowerLine = line.lowercased()
                     if lowerLine.contains("sudo: a password is required") ||
                         lowerLine.contains("password:") ||
                         lowerLine.contains("sudo: a terminal is required") {
                         logDebug("Sudo credentials requested on thread [\(thread.id)]")
-                        // Pause process and open helper popup
                         self.pendingSudoAction = SudoPendingAction(action: action, pkg: pkg, threadId: thread.id)
                         self.isSudoModalOpen = true
                     }
@@ -977,7 +876,6 @@ struct AISettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                // Header
                 HStack(spacing: 12) {
                     Image(systemName: "brain.head.profile.fill")
                         .font(.system(size: 28))
@@ -998,7 +896,6 @@ struct AISettingsView: View {
                 }
                 .padding(.bottom, 4)
                 
-                // Backend Picker
                 VStack(alignment: .leading, spacing: 8) {
                     Text("AI Provider")
                         .font(.system(size: 12, weight: .bold))
@@ -1020,7 +917,6 @@ struct AISettingsView: View {
                     LiquidGlassView(isHovered: false, isPressed: false, isProminent: false, cornerRadius: 12)
                 )
                 
-                // Provider-specific settings
                 switch selectedBackend {
                 case .apple:
                     appleSection
@@ -1145,7 +1041,6 @@ struct AskAISheet: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             HStack(spacing: 12) {
                 Image(systemName: "brain.head.profile.fill")
                     .font(.system(size: 24))
@@ -1178,7 +1073,6 @@ struct AskAISheet: View {
             
             Divider()
             
-            // Chat area
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if !response.isEmpty {
@@ -1217,7 +1111,6 @@ struct AskAISheet: View {
             
             Divider()
             
-            // Input bar
             HStack(spacing: 8) {
                 TextField("What does this package do?", text: $question)
                     .textFieldStyle(.roundedBorder)
@@ -1261,7 +1154,7 @@ struct AskAISheet: View {
     }
 }
 
-// --- LIQUID GLASS PACKAGE CARD VIEW (macOS 26) ---
+// --- LIQUID GLASS PACKAGE CARD VIEW ---
 
 struct PackageCardView: View {
     let pkg: BrewPackage
@@ -1348,7 +1241,7 @@ struct PackageCardView: View {
     }
 }
 
-// --- RECOMMENDED PACKAGES CAROUSEL (macOS 26) ---
+// --- RECOMMENDED PACKAGES CAROUSEL ---
 
 struct RecommendedPackagesCarousel: View {
     @ObservedObject var manager: BrewManager
@@ -1367,7 +1260,6 @@ struct RecommendedPackagesCarousel: View {
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
-                    // BOLT: Use pre-calculated recommendations from the manager to avoid O(N) overhead during render.
                     ForEach(manager.recommendedPackages) { pkg in
                         PackageCardView(pkg: pkg, manager: manager, action: {
                             selectedPackage = pkg
@@ -1413,7 +1305,6 @@ struct LiquidGlassView: View {
     
     var body: some View {
         ZStack {
-            // Blurred backing layer
             VisualEffectView(
                 material: isProminent ? .hudWindow : (isPressed ? .selection : (isHovered ? .selection : .contentBackground)),
                 blendingMode: .withinWindow,
@@ -1421,7 +1312,6 @@ struct LiquidGlassView: View {
             )
             .opacity(isPressed ? 0.6 : (isHovered ? 0.95 : 0.85))
             
-            // Specular reflection shine overlay
             LinearGradient(
                 colors: [
                     Color.white.opacity(isProminent ? 0.35 : (isHovered ? 0.26 : 0.18)),
@@ -1438,7 +1328,6 @@ struct LiquidGlassView: View {
         }
         .cornerRadius(cornerRadius)
         .overlay(
-            // Liquid glass highlight border
             RoundedRectangle(cornerRadius: cornerRadius)
                 .stroke(
                     LinearGradient(
@@ -1478,16 +1367,11 @@ struct GlassButtonStyle: ButtonStyle {
     }
 }
 
-
-// --- PACKAGE ROW COMPONENT ---
-
 // --- CASCAding PACKAGE ICON RESOLUTION VIEW ---
 
 struct PackageIconView: View {
     let pkg: BrewPackage
     
-    // BOLT OPTIMIZATION: Thread-safe lazy caching via 'static let' to avoid redundant disk I/O.
-    // This reduces UI lag when scrolling through long lists of packages.
     static let applicationsCache: [String] = (try? FileManager.default.contentsOfDirectory(atPath: "/Applications")) ?? []
     static let iconPathCache = NSCache<NSString, NSString>()
 
@@ -1525,7 +1409,6 @@ struct PackageIconView: View {
     }
     
     func getLocalAppIcon() -> NSImage? {
-        // BOLT: Check in-memory cache for previously resolved path to avoid file system lookups
         if let cachedPath = Self.iconPathCache.object(forKey: pkg.id as NSString) {
             return NSWorkspace.shared.icon(forFile: cachedPath as String)
         }
@@ -1551,7 +1434,6 @@ struct PackageIconView: View {
             }
         }
         
-        // BOLT: Use cached directory listing to avoid redundant disk I/O on every icon resolution
         for file in Self.applicationsCache {
             if file.hasSuffix(".app") {
                 let cleanAppName = file.replacingOccurrences(of: ".app", with: "").lowercased()
@@ -1995,7 +1877,6 @@ enum SidebarTab: String, CaseIterable, Hashable {
     }
 }
 
-
 // --- MAIN VIEW VIEW WITH NATIVE NAVIGATION SPLIT VIEW ---
 
 struct ContentView: View {
@@ -2067,7 +1948,6 @@ struct FeaturedCard: View {
     var body: some View {
         Button(action: action) {
             ZStack(alignment: .bottomLeading) {
-                // Background Landscape screenshot
                 if let url = screenshotUrl {
                     AsyncImage(url: url) { phase in
                         switch phase {
@@ -2078,7 +1958,6 @@ struct FeaturedCard: View {
                                 .frame(width: 320, height: 180)
                                 .clipped()
                         case .failure:
-                            // Fallback gradient panel if screenshot fails
                             LinearGradient(
                                 colors: [Color.blue.opacity(0.4), Color.purple.opacity(0.4)],
                                 startPoint: .topLeading,
@@ -2095,7 +1974,6 @@ struct FeaturedCard: View {
                     }
                 }
                 
-                // Dark bottom gradient overlay for text readability
                 LinearGradient(
                     gradient: Gradient(colors: [
                         Color.black.opacity(0.85),
@@ -2107,7 +1985,6 @@ struct FeaturedCard: View {
                 )
                 .frame(width: 320, height: 180)
                 
-                // Info Overlays
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.name)
@@ -2133,7 +2010,6 @@ struct FeaturedCard: View {
                     
                     Spacer()
                     
-                    // VIEW button style like App Store but transparent overlay
                     Text("VIEW")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.blue)
@@ -2198,7 +2074,6 @@ struct FeaturedCarouselSection: View {
                             if let pkg = manager.packages.first(where: { $0.id == item.token }) {
                                 selectedPackage = pkg
                             } else {
-                                // Create temporary BrewPackage if offline or not loaded yet
                                 selectedPackage = BrewPackage(
                                     id: item.token,
                                     name: item.name,
@@ -2249,12 +2124,10 @@ struct DetailView: View {
                 .frame(maxHeight: .infinity, alignment: .center)
                 .frame(maxWidth: .infinity, alignment: .center)
             } else {
-                let groupedPackages = Dictionary(grouping: filteredPackages, by: { $0.category })
+                let allFiltered = filteredPackages
+                let grouped = Dictionary(grouping: allFiltered, by: { $0.category })
+                
                 ScrollView {
-                    // BOLT: Pre-calculate filtered and grouped packages once to avoid O(N*C) complexity
-                    let allFiltered = filteredPackages
-                    let grouped = Dictionary(grouping: allFiltered, by: { $0.category })
-
                     VStack(alignment: .leading, spacing: 20) {
                         if tab == .discover && searchQuery.isEmpty {
                             FeaturedCarouselSection(manager: manager, selectedPackage: $selectedPackage)
@@ -2268,9 +2141,7 @@ struct DetailView: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 24) {
-                            // Category Shelves with expand/collapse and hide functionality
                             ForEach(AppCategory.allCases) { category in
-                                // Skip hidden categories
                                 if manager.hiddenCategories.contains(category.rawValue) {
                                     EmptyView()
                                 } else if let categoryPkgs = grouped[category], !categoryPkgs.isEmpty {
@@ -2326,7 +2197,6 @@ struct DetailView: View {
                 }
             }
             
-            // Console Drawer at the bottom
             BottomConsoleSection(manager: manager, isConsoleDrawerOpen: $isConsoleDrawerOpen, activeThreadId: $activeThreadId)
         }
         .background(Color.clear)
@@ -2338,7 +2208,6 @@ struct DetailView: View {
         .searchable(text: $searchQuery, placement: .toolbar, prompt: "Search \(tab.title.lowercased())...")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                // Refresh Button
                 Button(action: {
                     manager.loadLocalPackages()
                     manager.fetchOnlineCasks()
@@ -2347,7 +2216,6 @@ struct DetailView: View {
                 }
                 .help("Refresh Homebrew registries")
                 
-                // Segments for discover tab
                 if tab == .discover {
                     Picker("Filter Type", selection: $filterType) {
                         Text("All").tag("all")
@@ -2358,7 +2226,6 @@ struct DetailView: View {
                     .frame(width: 220)
                 }
                 
-                // Bulk action if selected items > 0
                 if !selectedIds.isEmpty {
                     Button(action: {
                         let targets = manager.packages.filter { selectedIds.contains($0.id) }
@@ -2416,7 +2283,6 @@ struct DetailView: View {
             }
             
             if !query.isEmpty {
-                // BOLT: Use localizedCaseInsensitiveContains for efficient, non-allocating search
                 return pkg.name.localizedCaseInsensitiveContains(query) ||
                        pkg.id.localizedCaseInsensitiveContains(query) ||
                        pkg.description.localizedCaseInsensitiveContains(query)
@@ -2437,7 +2303,6 @@ struct BottomConsoleSection: View {
         VStack(spacing: 0) {
             Divider()
             
-            // Console Header Bar
             HStack {
                 Button(action: {
                     withAnimation {
@@ -2458,7 +2323,6 @@ struct BottomConsoleSection: View {
                 
                 Spacer()
                 
-                // Multi-thread Status
                 HStack(spacing: 8) {
                     ForEach(manager.threads) { t in
                         HStack(spacing: 4) {
@@ -2606,17 +2470,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var configuredWindows = Set<NSWindow>()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Clear log file at start
         let logPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".brewdeck_debug.log").path
         try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
         logDebug("BrewDeck application started launch lifecycle.")
         
-        // Run on next runloop cycle to capture the initial window
         DispatchQueue.main.async {
             self.configureAllWindows()
         }
         
-        // Observe when any window becomes key/visible to catch late-created windows
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(windowDidBecomeVisible(_:)),
@@ -2631,7 +2492,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func configureAllWindows() {
         for window in NSApplication.shared.windows {
-            // Ignore system/helper panels
             guard window.className.contains("NSWindow") || window.className.contains("SwiftUI") else { continue }
             if !configuredWindows.contains(window) {
                 configuredWindows.insert(window)
@@ -2647,11 +2507,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.isMovableByWindowBackground = true
         window.hasShadow = true
         
-        // Window Transparency settings
         window.backgroundColor = .clear
         window.isOpaque = false
         
-        // Check if window content view is already configured
         guard !(window.contentView is CustomWindowContentView) else { return }
         
         if let originalContentView = window.contentView {
@@ -2740,7 +2598,6 @@ struct PackageDetailSheet: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             HStack(spacing: 16) {
                 PackageIconView(pkg: pkg)
                     .frame(width: 48, height: 48)
@@ -2779,10 +2636,8 @@ struct PackageDetailSheet: View {
             
             Divider()
             
-            // Contents
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Description
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Description")
                             .font(.system(size: 11, weight: .bold))
@@ -2792,7 +2647,6 @@ struct PackageDetailSheet: View {
                             .lineLimit(nil)
                     }
                     
-                    // Metadata Rows
                     VStack(alignment: .leading, spacing: 6) {
                         DetailMetaRow(label: "Available Version", value: pkg.version)
                         if let inst = pkg.installedVersion {
@@ -2817,7 +2671,6 @@ struct PackageDetailSheet: View {
                     .background(Color.primary.opacity(0.02))
                     .cornerRadius(8)
                     
-                    // Live Landing Page Screenshot Preview
                     VStack(alignment: .leading, spacing: 8) {
                         Text("App Preview / Screenshot")
                             .font(.system(size: 11, weight: .bold))
@@ -2864,7 +2717,6 @@ struct PackageDetailSheet: View {
                         }
                     }
                     
-                    // User Rating Section
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Your Rating")
                             .font(.system(size: 11, weight: .bold))
@@ -2880,7 +2732,6 @@ struct PackageDetailSheet: View {
             
             Divider()
             
-            // Actions Footer
             HStack {
                 Button(action: { showAISheet = true }) {
                     HStack(spacing: 4) {
@@ -2992,7 +2843,7 @@ struct MockScreenshotView: View {
     }
 }
 
-// --- MAIN ENTRyPOINT ---
+// --- MAIN ENTRYPOINT ---
 
 @main
 struct BrewDeckApp: App {
