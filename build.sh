@@ -24,11 +24,11 @@ else
 fi
 # Create a local module cache to avoid sandbox writes
 mkdir -p ModuleCache
-# Compile with chosen SDK and custom module cache
+# Compile with chosen SDK and custom module cache (Bumped target to macos26.0)
 swiftc -parse-as-library Sources/BrewDeck.swift \
   -sdk "$SDK_PATH" \
   -module-cache-path $(pwd)/ModuleCache \
-  -target arm64-apple-macos14.0 \
+  -target arm64-apple-macos26.0 \
   -framework SwiftUI \
   -framework AppKit \
   -framework FoundationModels \
@@ -62,7 +62,7 @@ cat <<EOF > BrewDeck.app/Contents/Info.plist
     <key>CFBundleShortVersionString</key>
     <string>1.2</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>26.0</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>LSUIElement</key>
