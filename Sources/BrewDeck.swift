@@ -36,10 +36,19 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var type: String // "cask" or "formula"
     var description: String
     var homepage: String
-    var version: String
-    var installedVersion: String?
+    var version: String {
+        didSet { recomputeHasUpdate() }
+    }
+    var installedVersion: String? {
+        didSet { recomputeHasUpdate() }
+    }
     var size: String = "Unknown"
     let category: AppCategory
+
+    // Stored properties for performance optimization (memoization)
+    private(set) var hasUpdate: Bool = false
+    var rating: Double
+    private(set) var ratingCount: String
 
     enum CodingKeys: String, CodingKey {
         case id, name, type, description, homepage, version, installedVersion, size
@@ -55,6 +64,11 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = installedVersion
         self.size = size
         self.category = Self.determineCategory(name: name, id: id, description: description)
+
+        // Initial performance calculation
+        self.hasUpdate = Self.calculateHasUpdate(installedVersion: installedVersion, version: version)
+        self.rating = Self.calculateRating(id: id)
+        self.ratingCount = Self.calculateRatingCount(id: id)
     }
 
     init(from decoder: Decoder) throws {
@@ -68,9 +82,18 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
         self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
         self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
+
+        // Initial performance calculation
+        self.hasUpdate = Self.calculateHasUpdate(installedVersion: self.installedVersion, version: self.version)
+        self.rating = Self.calculateRating(id: self.id)
+        self.ratingCount = Self.calculateRatingCount(id: self.id)
     }
 
-    var hasUpdate: Bool {
+    private mutating func recomputeHasUpdate() {
+        self.hasUpdate = Self.calculateHasUpdate(installedVersion: installedVersion, version: version)
+    }
+
+    static func calculateHasUpdate(installedVersion: String?, version: String) -> Bool {
         guard let inst = installedVersion else { return false }
         func parse(_ v: String) -> (String, Int) {
             let parts = v.split(separator: "_")
@@ -86,7 +109,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         return instRev < availRev
     }
 
-    var rating: Double {
+    static func calculateRating(id: String) -> Double {
         if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
             return saved
         }
@@ -95,7 +118,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         return Double(String(format: "%.1f", score)) ?? 4.5
     }
     
-    var ratingCount: String {
+    static func calculateRatingCount(id: String) -> String {
         let hash = abs(id.hashValue)
         let count = 12 + (hash % 188)
         if count >= 100 {
@@ -531,6 +554,14 @@ class BrewManager: ObservableObject {
         }
     }
     
+    func updatePackageRating(id: String, rating: Double) {
+        UserDefaults.standard.setValue(rating, forKey: "custom_rating_\(id)")
+        if let index = self.packages.firstIndex(where: { $0.id == id }) {
+            self.packages[index].rating = rating
+        }
+        logDebug("Saved custom user rating \(rating) for package: \(id)")
+    }
+
     func fetchOnlineCasks() {
         guard let url = URL(string: "https://formulae.brew.sh/api/cask.json") else { return }
         self.allCasksLoading = true
@@ -2536,6 +2567,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct InteractiveRatingBar: View {
     let pkgId: String
+    @ObservedObject var manager: BrewManager
     @State private var userRating: Int = 0
     @State private var isHoveredStar: Int? = nil
     
@@ -2547,8 +2579,7 @@ struct InteractiveRatingBar: View {
                     .foregroundColor(star <= (isHoveredStar ?? userRating) ? .yellow : .secondary.opacity(0.6))
                     .onTapGesture {
                         userRating = star
-                        UserDefaults.standard.setValue(Double(star), forKey: "custom_rating_\(pkgId)")
-                        logDebug("Saved custom user rating \(star) for package: \(pkgId)")
+                        manager.updatePackageRating(id: pkgId, rating: Double(star))
                     }
                     .onHover { hovering in
                         if hovering {
@@ -2721,7 +2752,7 @@ struct PackageDetailSheet: View {
                         Text("Your Rating")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
-                        InteractiveRatingBar(pkgId: pkg.id)
+                        InteractiveRatingBar(pkgId: pkg.id, manager: manager)
                     }
                     .padding(10)
                     .background(Color.primary.opacity(0.02))
