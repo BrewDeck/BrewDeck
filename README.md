@@ -16,7 +16,7 @@ BrewDeck is a beautifully designed, native macOS graphical user interface for Ho
 
 ## Prerequisites
 
-- macOS 14.0 (Sonoma) or later
+- macOS 26.0 (Sonoma) or later
 - [Homebrew](https://brew.sh/) installed on your system
 - Swift compiler and command-line tools (included with Xcode or Xcode Command Line Tools)
 

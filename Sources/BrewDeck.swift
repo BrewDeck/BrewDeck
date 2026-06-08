@@ -244,6 +244,13 @@ class BrewManager: ObservableObject {
     @Published var isLoadingLocal: Bool = false
     @Published var hiddenCategories: Set<String> = []
     @Published var recommendedPackages: [BrewPackage] = []
+    @Published var customScreenshots: [String: String] = [:] // id: localPath
+
+    func setCustomScreenshot(for id: String, path: String) {
+        customScreenshots[id] = path
+        UserDefaults.standard.set(customScreenshots, forKey: "custom_screenshots")
+        logDebug("Custom screenshot set for \(id): \(path)")
+    }
     
     func hideCategory(_ category: String) {
         hiddenCategories.insert(category)
@@ -257,6 +264,19 @@ class BrewManager: ObservableObject {
         logDebug("All categories restored.")
     }
     
+    init() {
+        if let stored = UserDefaults.standard.dictionary(forKey: "custom_screenshots") as? [String: String] {
+            self.customScreenshots = stored
+        }
+
+        if let hidden = UserDefaults.standard.stringArray(forKey: "hidden_categories") {
+            self.hiddenCategories = Set(hidden)
+        }
+
+        loadLocalPackages()
+        fetchOnlineCasks()
+    }
+
     func refreshRecommendations(force: Bool = false) {
         let now = Date().timeIntervalSince1970
         let lastTime = UserDefaults.standard.double(forKey: "recommendation_timestamp")
@@ -407,14 +427,6 @@ class BrewManager: ObservableObject {
         } catch {
             logDebug("Failed to spawn open command: \(error.localizedDescription)")
         }
-    }
-    
-    init() {
-        if let stored = UserDefaults.standard.stringArray(forKey: "hidden_categories") {
-            self.hiddenCategories = Set(stored)
-        }
-        loadLocalPackages()
-        fetchOnlineCasks()
     }
     
     func loadLocalPackages() {
@@ -1376,35 +1388,45 @@ struct PackageIconView: View {
     static let iconPathCache = NSCache<NSString, NSString>()
 
     var body: some View {
-        Group {
+        ZStack {
             if let localIcon = getLocalAppIcon() {
                 Image(nsImage: localIcon)
                     .resizable()
                     .scaledToFit()
             } else {
                 AsyncImage(url: URL(string: "https://github.com/App-Fair/appcasks/releases/download/\(pkg.id)/AppIcon.png")) { phase in
-                    switch phase {
-                    case .success(let image):
+                    if let image = phase.image {
                         image
                             .resizable()
                             .scaledToFit()
-                    default:
-                        if let domain = extractDomain(from: pkg.homepage), !domain.isEmpty {
-                            AsyncImage(url: URL(string: "https://icon.horse/icon/\(domain)")) { innerPhase in
-                                if case .success(let favicon) = innerPhase {
-                                    favicon
-                                        .resizable()
-                                        .scaledToFit()
-                                } else {
-                                    defaultSymbol
-                                }
-                            }
-                        } else {
-                            defaultSymbol
-                        }
+                    } else if phase.error != nil {
+                        // Fallback to favicon on failure
+                        fallbackIcon
+                    } else {
+                        // While loading, show a very subtle symbol or progress
+                        defaultSymbol.opacity(0.3)
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    var fallbackIcon: some View {
+        if let domain = extractDomain(from: pkg.homepage), !domain.isEmpty {
+            AsyncImage(url: URL(string: "https://icon.horse/icon/\(domain)")) { innerPhase in
+                if let favicon = innerPhase.image {
+                    favicon
+                        .resizable()
+                        .scaledToFit()
+                } else if innerPhase.error != nil {
+                    defaultSymbol
+                } else {
+                    defaultSymbol.opacity(0.3)
+                }
+            }
+        } else {
+            defaultSymbol
         }
     }
     
@@ -1514,7 +1536,9 @@ struct PackageIconView: View {
         }
         
         return Image(systemName: sym)
-            .font(.system(size: 14))
+            .resizable()
+            .scaledToFit()
+            .padding(4)
             .foregroundColor(color)
     }
 }
@@ -2588,6 +2612,20 @@ struct PackageDetailSheet: View {
     
     @State private var showAISheet = false
     
+    func selectCustomScreenshot() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image]
+        panel.message = "Select a screenshot for \(pkg.name)"
+
+        if panel.runModal() == .OK {
+            if let url = panel.url {
+                manager.setCustomScreenshot(for: pkg.id, path: url.path)
+            }
+        }
+    }
+
     var isProcessing: Bool {
         manager.threads.contains { $0.activeRunningId == pkg.id }
     }
@@ -2672,11 +2710,30 @@ struct PackageDetailSheet: View {
                     .cornerRadius(8)
                     
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("App Preview / Screenshot")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.secondary)
+                        HStack {
+                            Text("App Preview / Screenshot")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button(action: selectCustomScreenshot) {
+                                Label("Upload Custom", systemImage: "arrow.up.doc")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.blue)
+                        }
                         
-                        if !pkg.homepage.isEmpty, pkg.homepage.hasPrefix("http") {
+                        if let customPath = manager.customScreenshots[pkg.id], let image = NSImage(contentsOfFile: customPath) {
+                            Image(nsImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .cornerRadius(10)
+                                .shadow(color: Color.black.opacity(0.1), radius: 4, y: 2)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                                )
+                        } else if !pkg.homepage.isEmpty, pkg.homepage.hasPrefix("http") {
                             let screenshotUrl = "https://image.thum.io/get/maxAge/24/width/1024/crop/800/\(pkg.homepage)"
                             
                             AsyncImage(url: URL(string: screenshotUrl)) { phase in
@@ -2707,13 +2764,13 @@ struct PackageDetailSheet: View {
                                                 .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
                                         )
                                 case .failure:
-                                    MockScreenshotView(pkgName: pkg.name)
+                                    MockScreenshotView(pkgName: pkg.name, onUpload: selectCustomScreenshot)
                                 @unknown default:
                                     EmptyView()
                                 }
                             }
                         } else {
-                            MockScreenshotView(pkgName: pkg.name)
+                            MockScreenshotView(pkgName: pkg.name, onUpload: selectCustomScreenshot)
                         }
                     }
                     
@@ -2822,15 +2879,28 @@ struct DetailMetaRow: View {
 
 struct MockScreenshotView: View {
     let pkgName: String
+    var onUpload: (() -> Void)? = nil
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             Image(systemName: "photo.fill")
                 .font(.system(size: 32))
                 .foregroundColor(.secondary.opacity(0.5))
-            Text("Preview not available for \(pkgName)")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
+
+            VStack(spacing: 4) {
+                Text("Preview not available for \(pkgName)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                if let onUpload = onUpload {
+                    Button(action: onUpload) {
+                        Text("Upload Custom Screenshot")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
         .frame(height: 180)
         .frame(maxWidth: .infinity)
