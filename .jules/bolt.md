@@ -11,3 +11,7 @@
 ## 2024-05-28 - [Eliminating Redundant String Allocations and Categorization Logic]
 **Learning:** Computed properties that perform string lowercasing and multiple substring searches (like `BrewPackage.category`) are a major source of CPU and memory overhead during list rendering and grouping. Converting these to stored properties calculated once via `localizedCaseInsensitiveContains` significantly reduces overhead.
 **Action:** Always memoize derived metadata in core models that are used in high-frequency UI paths like list grouping and filtering. Use `localizedCaseInsensitiveContains` to avoid redundant string allocations.
+
+## 2025-05-14 - [Memoizing derived properties for UI performance]
+**Learning:** Computed properties that perform `UserDefaults` lookups or string-based version comparison (like `rating` and `hasUpdate`) cause significant UI stutter during list rendering. Converting these to stored properties updated once via `updateDerivedState()` avoids redundant I/O and CPU overhead.
+**Action:** Identify computed properties used in `ForEach` or list rows that perform expensive operations and convert them to stored properties managed by a centralized update method.
