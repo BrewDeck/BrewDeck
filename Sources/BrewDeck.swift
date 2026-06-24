@@ -36,10 +36,19 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var type: String // "cask" or "formula"
     var description: String
     var homepage: String
-    var version: String
-    var installedVersion: String?
+    var version: String {
+        didSet { updateDerivedState() }
+    }
+    var installedVersion: String? {
+        didSet { updateDerivedState() }
+    }
     var size: String = "Unknown"
     let category: AppCategory
+
+    // Performance: Stored properties for derived state to avoid redundant calculations and UserDefaults lookups in render cycles.
+    private(set) var hasUpdate: Bool = false
+    private(set) var rating: Double = 0.0
+    private(set) var ratingCount: String = ""
 
     enum CodingKeys: String, CodingKey {
         case id, name, type, description, homepage, version, installedVersion, size
@@ -55,6 +64,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = installedVersion
         self.size = size
         self.category = Self.determineCategory(name: name, id: id, description: description)
+        updateDerivedState()
     }
 
     init(from decoder: Decoder) throws {
@@ -68,41 +78,53 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
         self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
         self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
+        updateDerivedState()
     }
 
-    var hasUpdate: Bool {
-        guard let inst = installedVersion else { return false }
-        func parse(_ v: String) -> (String, Int) {
-            let parts = v.split(separator: "_")
-            let base = String(parts[0])
-            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-            return (base, rev)
-        }
-        let (instBase, instRev) = parse(inst)
-        let (availBase, availRev) = parse(version)
-        if instBase != availBase {
-            return instBase.compare(availBase, options: .numeric) == .orderedAscending
-        }
-        return instRev < availRev
+    /// Centralized update for performance-sensitive derived properties.
+    mutating func updateDerivedState() {
+        // Calculate update status
+        self.hasUpdate = {
+            guard let inst = installedVersion else { return false }
+            func parse(_ v: String) -> (String, Int) {
+                let parts = v.split(separator: "_")
+                let base = String(parts[0])
+                let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+                return (base, rev)
+            }
+            let (instBase, instRev) = parse(inst)
+            let (availBase, availRev) = parse(version)
+            if instBase != availBase {
+                return instBase.compare(availBase, options: .numeric) == .orderedAscending
+            }
+            return instRev < availRev
+        }()
+
+        // Cache rating from UserDefaults or fallback hash-based score
+        self.rating = {
+            if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
+                return saved
+            }
+            let hash = abs(id.hashValue)
+            let score = 4.3 + Double(hash % 7) * 0.1
+            return Double(String(format: "%.1f", score)) ?? 4.5
+        }()
+
+        // Cache rating count
+        self.ratingCount = {
+            let hash = abs(id.hashValue)
+            let count = 12 + (hash % 188)
+            if count >= 100 {
+                return "\(count)K"
+            } else {
+                return "\(count),\(hash % 9)00"
+            }
+        }()
     }
 
-    var rating: Double {
-        if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
-            return saved
-        }
-        let hash = abs(id.hashValue)
-        let score = 4.3 + Double(hash % 7) * 0.1
-        return Double(String(format: "%.1f", score)) ?? 4.5
-    }
-    
-    var ratingCount: String {
-        let hash = abs(id.hashValue)
-        let count = 12 + (hash % 188)
-        if count >= 100 {
-            return "\(count)K"
-        } else {
-            return "\(count),\(hash % 9)00"
-        }
+    /// Internal method for manager to update rating without full re-calculation
+    mutating func setRating(_ newRating: Double) {
+        self.rating = newRating
     }
     
     static func determineCategory(name: String, id: String, description: String) -> AppCategory {
@@ -245,6 +267,22 @@ class BrewManager: ObservableObject {
     @Published var hiddenCategories: Set<String> = []
     @Published var recommendedPackages: [BrewPackage] = []
     
+    /// Centralized rating update for synchronization between memory and persistence.
+    func updatePackageRating(id: String, rating: Int) {
+        let doubleRating = Double(rating)
+        UserDefaults.standard.setValue(doubleRating, forKey: "custom_rating_\(id)")
+
+        // Update in-memory collections for immediate UI feedback without re-computation
+        if let idx = self.packages.firstIndex(where: { $0.id == id }) {
+            self.packages[idx].setRating(doubleRating)
+        }
+        if let idx = self.recommendedPackages.firstIndex(where: { $0.id == id }) {
+            self.recommendedPackages[idx].setRating(doubleRating)
+        }
+
+        logDebug("Manager updated rating for \(id) to \(rating)")
+    }
+
     func hideCategory(_ category: String) {
         hiddenCategories.insert(category)
         UserDefaults.standard.set(Array(hiddenCategories), forKey: "hidden_categories")
@@ -263,7 +301,8 @@ class BrewManager: ObservableObject {
         
         if !force && (now - lastTime < 86400) {
             if let storedIds = UserDefaults.standard.stringArray(forKey: "recommended_package_ids") {
-                let cached = self.packages.filter { storedIds.contains($0.id) }
+                let idSet = Set(storedIds)
+                let cached = self.packages.filter { idSet.contains($0.id) }
                 if !cached.isEmpty {
                     DispatchQueue.main.async {
                         self.recommendedPackages = cached
@@ -2536,6 +2575,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct InteractiveRatingBar: View {
     let pkgId: String
+    @ObservedObject var manager: BrewManager
     @State private var userRating: Int = 0
     @State private var isHoveredStar: Int? = nil
     
@@ -2547,8 +2587,7 @@ struct InteractiveRatingBar: View {
                     .foregroundColor(star <= (isHoveredStar ?? userRating) ? .yellow : .secondary.opacity(0.6))
                     .onTapGesture {
                         userRating = star
-                        UserDefaults.standard.setValue(Double(star), forKey: "custom_rating_\(pkgId)")
-                        logDebug("Saved custom user rating \(star) for package: \(pkgId)")
+                        manager.updatePackageRating(id: pkgId, rating: star)
                     }
                     .onHover { hovering in
                         if hovering {
@@ -2721,7 +2760,7 @@ struct PackageDetailSheet: View {
                         Text("Your Rating")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
-                        InteractiveRatingBar(pkgId: pkg.id)
+                        InteractiveRatingBar(pkgId: pkg.id, manager: manager)
                     }
                     .padding(10)
                     .background(Color.primary.opacity(0.02))
