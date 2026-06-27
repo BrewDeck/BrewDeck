@@ -36,10 +36,19 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var type: String // "cask" or "formula"
     var description: String
     var homepage: String
-    var version: String
-    var installedVersion: String?
+    var version: String {
+        didSet { updateDerivedState() }
+    }
+    var installedVersion: String? {
+        didSet { updateDerivedState() }
+    }
     var size: String = "Unknown"
     let category: AppCategory
+
+    // Performance-optimized stored properties for derived data
+    private(set) var hasUpdate: Bool = false
+    private(set) var rating: Double = 4.5
+    private(set) var ratingCount: String = "0"
 
     enum CodingKeys: String, CodingKey {
         case id, name, type, description, homepage, version, installedVersion, size
@@ -55,6 +64,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = installedVersion
         self.size = size
         self.category = Self.determineCategory(name: name, id: id, description: description)
+        updateDerivedState()
     }
 
     init(from decoder: Decoder) throws {
@@ -68,41 +78,48 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
         self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
         self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
+        updateDerivedState()
     }
 
-    var hasUpdate: Bool {
-        guard let inst = installedVersion else { return false }
-        func parse(_ v: String) -> (String, Int) {
-            let parts = v.split(separator: "_")
-            let base = String(parts[0])
-            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-            return (base, rev)
-        }
-        let (instBase, instRev) = parse(inst)
-        let (availBase, availRev) = parse(version)
-        if instBase != availBase {
-            return instBase.compare(availBase, options: .numeric) == .orderedAscending
-        }
-        return instRev < availRev
-    }
+    /// Recalculates derived state to avoid expensive computation during UI render cycles.
+    mutating func updateDerivedState() {
+        // 1. Calculate update status
+        self.hasUpdate = {
+            guard let inst = installedVersion else { return false }
+            func parse(_ v: String) -> (String, Int) {
+                let parts = v.split(separator: "_")
+                let base = String(parts[0])
+                let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+                return (base, rev)
+            }
+            let (instBase, instRev) = parse(inst)
+            let (availBase, availRev) = parse(version)
+            if instBase != availBase {
+                return instBase.compare(availBase, options: .numeric) == .orderedAscending
+            }
+            return instRev < availRev
+        }()
 
-    var rating: Double {
-        if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
-            return saved
-        }
-        let hash = abs(id.hashValue)
-        let score = 4.3 + Double(hash % 7) * 0.1
-        return Double(String(format: "%.1f", score)) ?? 4.5
-    }
-    
-    var ratingCount: String {
-        let hash = abs(id.hashValue)
-        let count = 12 + (hash % 188)
-        if count >= 100 {
-            return "\(count)K"
-        } else {
-            return "\(count),\(hash % 9)00"
-        }
+        // 2. Calculate rating
+        self.rating = {
+            if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
+                return saved
+            }
+            let hash = abs(id.hashValue)
+            let score = 4.3 + Double(hash % 7) * 0.1
+            return Double(String(format: "%.1f", score)) ?? 4.5
+        }()
+
+        // 3. Calculate rating count
+        self.ratingCount = {
+            let hash = abs(id.hashValue)
+            let count = 12 + (hash % 188)
+            if count >= 100 {
+                return "\(count)K"
+            } else {
+                return "\(count),\(hash % 9)00"
+            }
+        }()
     }
     
     static func determineCategory(name: String, id: String, description: String) -> AppCategory {
@@ -255,6 +272,23 @@ class BrewManager: ObservableObject {
         hiddenCategories.removeAll()
         UserDefaults.standard.removeObject(forKey: "hidden_categories")
         logDebug("All categories restored.")
+    }
+
+    /// Centrally manages package rating updates, ensuring memory models and UserDefaults are in sync.
+    func updatePackageRating(id: String, rating: Int) {
+        UserDefaults.standard.setValue(Double(rating), forKey: "custom_rating_\(id)")
+
+        // Update main packages array
+        if let index = packages.firstIndex(where: { $0.id == id }) {
+            packages[index].updateDerivedState()
+        }
+
+        // Update recommended packages if applicable
+        if let recIndex = recommendedPackages.firstIndex(where: { $0.id == id }) {
+            recommendedPackages[recIndex].updateDerivedState()
+        }
+
+        logDebug("Centrally updated rating for \(id) to \(rating)")
     }
     
     func refreshRecommendations(force: Bool = false) {
@@ -2536,6 +2570,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct InteractiveRatingBar: View {
     let pkgId: String
+    @ObservedObject var manager: BrewManager
     @State private var userRating: Int = 0
     @State private var isHoveredStar: Int? = nil
     
@@ -2547,8 +2582,7 @@ struct InteractiveRatingBar: View {
                     .foregroundColor(star <= (isHoveredStar ?? userRating) ? .yellow : .secondary.opacity(0.6))
                     .onTapGesture {
                         userRating = star
-                        UserDefaults.standard.setValue(Double(star), forKey: "custom_rating_\(pkgId)")
-                        logDebug("Saved custom user rating \(star) for package: \(pkgId)")
+                        manager.updatePackageRating(id: pkgId, rating: star)
                     }
                     .onHover { hovering in
                         if hovering {
@@ -2721,7 +2755,7 @@ struct PackageDetailSheet: View {
                         Text("Your Rating")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
-                        InteractiveRatingBar(pkgId: pkg.id)
+                        InteractiveRatingBar(pkgId: pkg.id, manager: manager)
                     }
                     .padding(10)
                     .background(Color.primary.opacity(0.02))
