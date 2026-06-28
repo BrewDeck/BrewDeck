@@ -11,3 +11,11 @@
 ## 2024-05-28 - [Eliminating Redundant String Allocations and Categorization Logic]
 **Learning:** Computed properties that perform string lowercasing and multiple substring searches (like `BrewPackage.category`) are a major source of CPU and memory overhead during list rendering and grouping. Converting these to stored properties calculated once via `localizedCaseInsensitiveContains` significantly reduces overhead.
 **Action:** Always memoize derived metadata in core models that are used in high-frequency UI paths like list grouping and filtering. Use `localizedCaseInsensitiveContains` to avoid redundant string allocations.
+
+## 2026-02-21 - [Optimizing lookup complexity in large datasets]
+**Learning:** Using `Array.contains` inside a `.filter` closure on a large collection (like `self.packages`) leads to $O(N \times M)$ complexity. When the array contains thousands of items, this results in noticeable hangs.
+**Action:** Convert the lookup array into a `Set` before filtering to achieve $O(N)$ complexity.
+
+## 2026-02-21 - [Avoiding redundant UserDefaults and parsing in models]
+**Learning:** Computed properties that access `UserDefaults` or perform version string parsing (like `BrewPackage.hasUpdate` or `rating`) are expensive when called repeatedly in UI lists.
+**Action:** Convert computed properties into stored properties. Use `didSet` observers on the source fields (like `version` and `installedVersion`) and update the stored state in initializers and mutation methods to keep them in sync.
