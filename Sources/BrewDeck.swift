@@ -41,6 +41,10 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var size: String = "Unknown"
     let category: AppCategory
 
+    var hasUpdate: Bool = false
+    var rating: Double = 4.5
+    var ratingCount: String = "0"
+
     enum CodingKeys: String, CodingKey {
         case id, name, type, description, homepage, version, installedVersion, size
     }
@@ -55,6 +59,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = installedVersion
         self.size = size
         self.category = Self.determineCategory(name: name, id: id, description: description)
+        updateDerivedState()
     }
 
     init(from decoder: Decoder) throws {
@@ -68,40 +73,45 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
         self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
         self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
+        updateDerivedState()
     }
 
-    var hasUpdate: Bool {
-        guard let inst = installedVersion else { return false }
-        func parse(_ v: String) -> (String, Int) {
-            let parts = v.split(separator: "_")
-            let base = String(parts[0])
-            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-            return (base, rev)
+    mutating func updateDerivedState() {
+        // Update hasUpdate
+        if let inst = installedVersion {
+            func parse(_ v: String) -> (String, Int) {
+                let parts = v.split(separator: "_")
+                let base = String(parts[0])
+                let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+                return (base, rev)
+            }
+            let (instBase, instRev) = parse(inst)
+            let (availBase, availRev) = parse(version)
+            if instBase != availBase {
+                self.hasUpdate = instBase.compare(availBase, options: .numeric) == .orderedAscending
+            } else {
+                self.hasUpdate = instRev < availRev
+            }
+        } else {
+            self.hasUpdate = false
         }
-        let (instBase, instRev) = parse(inst)
-        let (availBase, availRev) = parse(version)
-        if instBase != availBase {
-            return instBase.compare(availBase, options: .numeric) == .orderedAscending
-        }
-        return instRev < availRev
-    }
 
-    var rating: Double {
+        // Update rating (O(1) lookup here, but avoids repeated UserDefaults hits in render loops)
         if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
-            return saved
+            self.rating = saved
+        } else {
+            let hash = abs(id.hashValue)
+            let score = 4.3 + Double(hash % 7) * 0.1
+            self.rating = Double(String(format: "%.1f", score)) ?? 4.5
         }
-        let hash = abs(id.hashValue)
-        let score = 4.3 + Double(hash % 7) * 0.1
-        return Double(String(format: "%.1f", score)) ?? 4.5
-    }
-    
-    var ratingCount: String {
+
+        // Update ratingCount
         let hash = abs(id.hashValue)
         let count = 12 + (hash % 188)
         if count >= 100 {
-            return "\(count)K"
+            self.ratingCount = "\(count)K"
         } else {
-            return "\(count),\(hash % 9)00"
+            self.ratingCount = "\(count),\(hash % 9)00"
         }
     }
     
@@ -263,7 +273,8 @@ class BrewManager: ObservableObject {
         
         if !force && (now - lastTime < 86400) {
             if let storedIds = UserDefaults.standard.stringArray(forKey: "recommended_package_ids") {
-                let cached = self.packages.filter { storedIds.contains($0.id) }
+                let idSet = Set(storedIds)
+                let cached = self.packages.filter { idSet.contains($0.id) }
                 if !cached.isEmpty {
                     DispatchQueue.main.async {
                         self.recommendedPackages = cached
@@ -485,10 +496,12 @@ class BrewManager: ObservableObject {
             if let localPkg = localMap[pkg.id] {
                 var updated = pkg
                 updated.installedVersion = localPkg.installedVersion
+                updated.updateDerivedState()
                 return updated
             } else {
                 var updated = pkg
                 updated.installedVersion = nil
+                updated.updateDerivedState()
                 return updated
             }
         }
@@ -520,6 +533,7 @@ class BrewManager: ObservableObject {
                         if let latestVer = outdatedMap[pkg.id] {
                             var updated = pkg
                             updated.version = latestVer
+                            updated.updateDerivedState()
                             return updated
                         }
                         return pkg
