@@ -41,6 +41,11 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var size: String = "Unknown"
     let category: AppCategory
 
+    // Performance: Stored properties to avoid redundant re-calculations in UI render cycles
+    private(set) var hasUpdate: Bool = false
+    private(set) var rating: Double = 0.0
+    private(set) var ratingCount: String = ""
+
     enum CodingKeys: String, CodingKey {
         case id, name, type, description, homepage, version, installedVersion, size
     }
@@ -55,6 +60,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = installedVersion
         self.size = size
         self.category = Self.determineCategory(name: name, id: id, description: description)
+        updateDerivedState()
     }
 
     init(from decoder: Decoder) throws {
@@ -68,40 +74,45 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
         self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
         self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
+        updateDerivedState()
     }
 
-    var hasUpdate: Bool {
-        guard let inst = installedVersion else { return false }
-        func parse(_ v: String) -> (String, Int) {
-            let parts = v.split(separator: "_")
-            let base = String(parts[0])
-            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-            return (base, rev)
+    mutating func updateDerivedState() {
+        // Calculate hasUpdate
+        if let inst = installedVersion {
+            func parse(_ v: String) -> (String, Int) {
+                let parts = v.split(separator: "_")
+                let base = String(parts[0])
+                let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+                return (base, rev)
+            }
+            let (instBase, instRev) = parse(inst)
+            let (availBase, availRev) = parse(version)
+            if instBase != availBase {
+                self.hasUpdate = instBase.compare(availBase, options: .numeric) == .orderedAscending
+            } else {
+                self.hasUpdate = instRev < availRev
+            }
+        } else {
+            self.hasUpdate = false
         }
-        let (instBase, instRev) = parse(inst)
-        let (availBase, availRev) = parse(version)
-        if instBase != availBase {
-            return instBase.compare(availBase, options: .numeric) == .orderedAscending
-        }
-        return instRev < availRev
-    }
 
-    var rating: Double {
+        // Calculate rating
         if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
-            return saved
+            self.rating = saved
+        } else {
+            let hash = abs(id.hashValue)
+            let score = 4.3 + Double(hash % 7) * 0.1
+            self.rating = Double(String(format: "%.1f", score)) ?? 4.5
         }
-        let hash = abs(id.hashValue)
-        let score = 4.3 + Double(hash % 7) * 0.1
-        return Double(String(format: "%.1f", score)) ?? 4.5
-    }
-    
-    var ratingCount: String {
+
+        // Calculate ratingCount
         let hash = abs(id.hashValue)
         let count = 12 + (hash % 188)
         if count >= 100 {
-            return "\(count)K"
+            self.ratingCount = "\(count)K"
         } else {
-            return "\(count),\(hash % 9)00"
+            self.ratingCount = "\(count),\(hash % 9)00"
         }
     }
     
@@ -257,6 +268,21 @@ class BrewManager: ObservableObject {
         logDebug("All categories restored.")
     }
     
+    func updatePackageRating(id: String, rating: Double) {
+        UserDefaults.standard.setValue(rating, forKey: "custom_rating_\(id)")
+
+        // Performance: Update stored properties in memory to avoid full re-render or UserDefaults re-read
+        if let index = self.packages.firstIndex(where: { $0.id == id }) {
+            self.packages[index].updateDerivedState()
+            logDebug("BrewManager: Updated stored rating for \(id) in main list")
+        }
+
+        if let recIndex = self.recommendedPackages.firstIndex(where: { $0.id == id }) {
+            self.recommendedPackages[recIndex].updateDerivedState()
+            logDebug("BrewManager: Updated stored rating for \(id) in recommendations")
+        }
+    }
+
     func refreshRecommendations(force: Bool = false) {
         let now = Date().timeIntervalSince1970
         let lastTime = UserDefaults.standard.double(forKey: "recommendation_timestamp")
@@ -482,21 +508,22 @@ class BrewManager: ObservableObject {
         }
         
         self.packages = self.packages.map { pkg in
+            var updated = pkg
             if let localPkg = localMap[pkg.id] {
-                var updated = pkg
                 updated.installedVersion = localPkg.installedVersion
-                return updated
             } else {
-                var updated = pkg
                 updated.installedVersion = nil
-                return updated
             }
+            updated.updateDerivedState()
+            return updated
         }
         
         let currentIds = Set(self.packages.map { $0.id })
         for lp in localList {
             if !currentIds.contains(lp.id) {
-                self.packages.append(lp)
+                var newPkg = lp
+                newPkg.updateDerivedState()
+                self.packages.append(newPkg)
             }
         }
     }
@@ -520,6 +547,7 @@ class BrewManager: ObservableObject {
                         if let latestVer = outdatedMap[pkg.id] {
                             var updated = pkg
                             updated.version = latestVer
+                            updated.updateDerivedState()
                             return updated
                         }
                         return pkg
@@ -2536,6 +2564,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct InteractiveRatingBar: View {
     let pkgId: String
+    @ObservedObject var manager: BrewManager
     @State private var userRating: Int = 0
     @State private var isHoveredStar: Int? = nil
     
@@ -2547,8 +2576,8 @@ struct InteractiveRatingBar: View {
                     .foregroundColor(star <= (isHoveredStar ?? userRating) ? .yellow : .secondary.opacity(0.6))
                     .onTapGesture {
                         userRating = star
-                        UserDefaults.standard.setValue(Double(star), forKey: "custom_rating_\(pkgId)")
-                        logDebug("Saved custom user rating \(star) for package: \(pkgId)")
+                        manager.updatePackageRating(id: pkgId, rating: Double(star))
+                        logDebug("InteractiveRatingBar: Requested rating \(star) update via manager for \(pkgId)")
                     }
                     .onHover { hovering in
                         if hovering {
@@ -2721,7 +2750,7 @@ struct PackageDetailSheet: View {
                         Text("Your Rating")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
-                        InteractiveRatingBar(pkgId: pkg.id)
+                        InteractiveRatingBar(pkgId: pkg.id, manager: manager)
                     }
                     .padding(10)
                     .background(Color.primary.opacity(0.02))
