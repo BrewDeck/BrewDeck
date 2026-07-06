@@ -41,6 +41,11 @@ struct BrewPackage: Identifiable, Codable, Equatable {
     var size: String = "Unknown"
     let category: AppCategory
 
+    // Performance optimized stored properties for derived state
+    var hasUpdate: Bool = false
+    var rating: Double = 0.0
+    var ratingCount: String = ""
+
     enum CodingKeys: String, CodingKey {
         case id, name, type, description, homepage, version, installedVersion, size
     }
@@ -55,6 +60,7 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = installedVersion
         self.size = size
         self.category = Self.determineCategory(name: name, id: id, description: description)
+        updateDerivedState()
     }
 
     init(from decoder: Decoder) throws {
@@ -68,40 +74,45 @@ struct BrewPackage: Identifiable, Codable, Equatable {
         self.installedVersion = try container.decodeIfPresent(String.self, forKey: .installedVersion)
         self.size = try container.decodeIfPresent(String.self, forKey: .size) ?? "Unknown"
         self.category = Self.determineCategory(name: self.name, id: self.id, description: self.description)
+        updateDerivedState()
     }
 
-    var hasUpdate: Bool {
-        guard let inst = installedVersion else { return false }
-        func parse(_ v: String) -> (String, Int) {
-            let parts = v.split(separator: "_")
-            let base = String(parts[0])
-            let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-            return (base, rev)
+    mutating func updateDerivedState() {
+        // Calculate hasUpdate
+        if let inst = installedVersion {
+            let parse = { (v: String) -> (String, Int) in
+                let parts = v.split(separator: "_")
+                let base = String(parts[0])
+                let rev = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+                return (base, rev)
+            }
+            let (instBase, instRev) = parse(inst)
+            let (availBase, availRev) = parse(version)
+            if instBase != availBase {
+                self.hasUpdate = instBase.compare(availBase, options: .numeric) == .orderedAscending
+            } else {
+                self.hasUpdate = instRev < availRev
+            }
+        } else {
+            self.hasUpdate = false
         }
-        let (instBase, instRev) = parse(inst)
-        let (availBase, availRev) = parse(version)
-        if instBase != availBase {
-            return instBase.compare(availBase, options: .numeric) == .orderedAscending
-        }
-        return instRev < availRev
-    }
 
-    var rating: Double {
+        // Calculate rating
         if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(id)") as? Double {
-            return saved
+            self.rating = saved
+        } else {
+            let hash = abs(id.hashValue)
+            let score = 4.3 + Double(hash % 7) * 0.1
+            self.rating = Double(String(format: "%.1f", score)) ?? 4.5
         }
-        let hash = abs(id.hashValue)
-        let score = 4.3 + Double(hash % 7) * 0.1
-        return Double(String(format: "%.1f", score)) ?? 4.5
-    }
-    
-    var ratingCount: String {
+
+        // Calculate ratingCount
         let hash = abs(id.hashValue)
         let count = 12 + (hash % 188)
         if count >= 100 {
-            return "\(count)K"
+            self.ratingCount = "\(count)K"
         } else {
-            return "\(count),\(hash % 9)00"
+            self.ratingCount = "\(count),\(hash % 9)00"
         }
     }
     
@@ -245,6 +256,28 @@ class BrewManager: ObservableObject {
     @Published var hiddenCategories: Set<String> = []
     @Published var recommendedPackages: [BrewPackage] = []
     
+    /// Updates the rating for a package and ensures all in-memory models and UserDefaults are in sync.
+    /// This centralized update pattern prevents O(N) overhead during UI rendering.
+    func updatePackageRating(id: String, rating: Double) {
+        UserDefaults.standard.setValue(rating, forKey: "custom_rating_\(id)")
+
+        // Update main packages list
+        if let idx = packages.firstIndex(where: { $0.id == id }) {
+            var updated = packages[idx]
+            updated.updateDerivedState()
+            packages[idx] = updated
+        }
+
+        // Update recommended list if present
+        if let idx = recommendedPackages.firstIndex(where: { $0.id == id }) {
+            var updated = recommendedPackages[idx]
+            updated.updateDerivedState()
+            recommendedPackages[idx] = updated
+        }
+
+        logDebug("Centrally updated rating for \(id) to \(rating)")
+    }
+
     func hideCategory(_ category: String) {
         hiddenCategories.insert(category)
         UserDefaults.standard.set(Array(hiddenCategories), forKey: "hidden_categories")
@@ -485,10 +518,12 @@ class BrewManager: ObservableObject {
             if let localPkg = localMap[pkg.id] {
                 var updated = pkg
                 updated.installedVersion = localPkg.installedVersion
+                updated.updateDerivedState()
                 return updated
             } else {
                 var updated = pkg
                 updated.installedVersion = nil
+                updated.updateDerivedState()
                 return updated
             }
         }
@@ -520,6 +555,7 @@ class BrewManager: ObservableObject {
                         if let latestVer = outdatedMap[pkg.id] {
                             var updated = pkg
                             updated.version = latestVer
+                            updated.updateDerivedState()
                             return updated
                         }
                         return pkg
@@ -2536,9 +2572,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct InteractiveRatingBar: View {
     let pkgId: String
+    @ObservedObject var manager: BrewManager
     @State private var userRating: Int = 0
     @State private var isHoveredStar: Int? = nil
     
+    init(pkgId: String, manager: BrewManager) {
+        self.pkgId = pkgId
+        self.manager = manager
+        // Pre-load from UserDefaults to avoid blank state during render
+        if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(pkgId)") as? Double {
+            self._userRating = State(initialValue: Int(saved))
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             ForEach(1...5, id: \.self) { star in
@@ -2547,8 +2593,7 @@ struct InteractiveRatingBar: View {
                     .foregroundColor(star <= (isHoveredStar ?? userRating) ? .yellow : .secondary.opacity(0.6))
                     .onTapGesture {
                         userRating = star
-                        UserDefaults.standard.setValue(Double(star), forKey: "custom_rating_\(pkgId)")
-                        logDebug("Saved custom user rating \(star) for package: \(pkgId)")
+                        manager.updatePackageRating(id: pkgId, rating: Double(star))
                     }
                     .onHover { hovering in
                         if hovering {
@@ -2571,11 +2616,6 @@ struct InteractiveRatingBar: View {
                     .padding(.leading, 8)
             }
         }
-        .onAppear {
-            if let saved = UserDefaults.standard.value(forKey: "custom_rating_\(pkgId)") as? Double {
-                userRating = Int(saved)
-            }
-        }
     }
 }
 
@@ -2584,6 +2624,11 @@ struct InteractiveRatingBar: View {
 struct PackageDetailSheet: View {
     let pkg: BrewPackage
     @ObservedObject var manager: BrewManager
+
+    // Fetch latest state from manager to reflect live rating changes
+    private var currentPkg: BrewPackage {
+        manager.packages.first(where: { $0.id == pkg.id }) ?? pkg
+    }
     @Environment(\.dismiss) var dismiss
     
     @State private var showAISheet = false
@@ -2599,26 +2644,26 @@ struct PackageDetailSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                PackageIconView(pkg: pkg)
+                PackageIconView(pkg: currentPkg)
                     .frame(width: 48, height: 48)
                     .background(Color.primary.opacity(0.04))
                     .cornerRadius(10)
                 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(pkg.name)
+                        Text(currentPkg.name)
                             .font(.system(size: 16, weight: .bold))
                         
-                        Text(pkg.type.uppercased())
+                        Text(currentPkg.type.uppercased())
                             .font(.system(size: 8, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(pkg.type == "cask" ? Color.purple.opacity(0.1) : Color.orange.opacity(0.1))
-                            .foregroundColor(pkg.type == "cask" ? .purple : .orange)
+                            .background(currentPkg.type == "cask" ? Color.purple.opacity(0.1) : Color.orange.opacity(0.1))
+                            .foregroundColor(currentPkg.type == "cask" ? .purple : .orange)
                             .cornerRadius(4)
                     }
                     
-                    Text(pkg.id)
+                    Text(currentPkg.id)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
@@ -2642,26 +2687,26 @@ struct PackageDetailSheet: View {
                         Text("Description")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
-                        Text(pkg.description)
+                        Text(currentPkg.description)
                             .font(.system(size: 13))
                             .lineLimit(nil)
                     }
                     
                     VStack(alignment: .leading, spacing: 6) {
-                        DetailMetaRow(label: "Available Version", value: pkg.version)
-                        if let inst = pkg.installedVersion {
+                        DetailMetaRow(label: "Available Version", value: currentPkg.version)
+                        if let inst = currentPkg.installedVersion {
                             DetailMetaRow(label: "Installed Version", value: inst)
                         } else {
                             DetailMetaRow(label: "Installed Status", value: "Not Installed")
                         }
                         
-                        if !pkg.homepage.isEmpty, let homeUrl = URL(string: pkg.homepage) {
+                        if !currentPkg.homepage.isEmpty, let homeUrl = URL(string: currentPkg.homepage) {
                             HStack {
                                 Text("Homepage")
                                     .font(.system(size: 11))
                                     .foregroundColor(.secondary)
                                 Spacer()
-                                Link(pkg.homepage, destination: homeUrl)
+                                Link(currentPkg.homepage, destination: homeUrl)
                                     .font(.system(size: 11))
                                     .foregroundColor(.blue)
                             }
@@ -2676,8 +2721,8 @@ struct PackageDetailSheet: View {
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
                         
-                        if !pkg.homepage.isEmpty, pkg.homepage.hasPrefix("http") {
-                            let screenshotUrl = "https://image.thum.io/get/maxAge/24/width/1024/crop/800/\(pkg.homepage)"
+                        if !currentPkg.homepage.isEmpty, currentPkg.homepage.hasPrefix("http") {
+                            let screenshotUrl = "https://image.thum.io/get/maxAge/24/width/1024/crop/800/\(currentPkg.homepage)"
                             
                             AsyncImage(url: URL(string: screenshotUrl)) { phase in
                                 switch phase {
@@ -2707,13 +2752,13 @@ struct PackageDetailSheet: View {
                                                 .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
                                         )
                                 case .failure:
-                                    MockScreenshotView(pkgName: pkg.name)
+                                    MockScreenshotView(pkgName: currentPkg.name)
                                 @unknown default:
                                     EmptyView()
                                 }
                             }
                         } else {
-                            MockScreenshotView(pkgName: pkg.name)
+                            MockScreenshotView(pkgName: currentPkg.name)
                         }
                     }
                     
@@ -2721,7 +2766,7 @@ struct PackageDetailSheet: View {
                         Text("Your Rating")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
-                        InteractiveRatingBar(pkgId: pkg.id)
+                        InteractiveRatingBar(pkgId: pkg.id, manager: manager)
                     }
                     .padding(10)
                     .background(Color.primary.opacity(0.02))
@@ -2759,33 +2804,33 @@ struct PackageDetailSheet: View {
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 10)
                 } else {
-                    if pkg.installedVersion == nil {
+                    if currentPkg.installedVersion == nil {
                         Button("Install Package") {
                             dismiss()
-                            manager.queueAction(action: "install", pkg: pkg)
+                            manager.queueAction(action: "install", pkg: currentPkg)
                         }
                         .buttonStyle(GlassButtonStyle(isProminent: true))
                     } else {
                         HStack(spacing: 8) {
-                            if pkg.type == "cask" {
+                            if currentPkg.type == "cask" {
                                 Button("Open App") {
                                     dismiss()
-                                    manager.openApp(pkg: pkg)
+                                    manager.openApp(pkg: currentPkg)
                                 }
                                 .buttonStyle(GlassButtonStyle(isProminent: true))
                             }
                             
-                            if pkg.hasUpdate {
+                            if currentPkg.hasUpdate {
                                 Button("Update Cask") {
                                     dismiss()
-                                    manager.queueAction(action: "upgrade", pkg: pkg)
+                                    manager.queueAction(action: "upgrade", pkg: currentPkg)
                                 }
                                 .buttonStyle(GlassButtonStyle(isProminent: false))
                             }
                             
                             Button("Uninstall") {
                                 dismiss()
-                                manager.queueAction(action: "uninstall", pkg: pkg)
+                                manager.queueAction(action: "uninstall", pkg: currentPkg)
                             }
                             .buttonStyle(GlassButtonStyle(isProminent: false))
                         }
