@@ -11,3 +11,7 @@
 ## 2024-05-28 - [Eliminating Redundant String Allocations and Categorization Logic]
 **Learning:** Computed properties that perform string lowercasing and multiple substring searches (like `BrewPackage.category`) are a major source of CPU and memory overhead during list rendering and grouping. Converting these to stored properties calculated once via `localizedCaseInsensitiveContains` significantly reduces overhead.
 **Action:** Always memoize derived metadata in core models that are used in high-frequency UI paths like list grouping and filtering. Use `localizedCaseInsensitiveContains` to avoid redundant string allocations.
+
+## 2026-02-21 - [Eliminating Synchronous I/O in UI Render Paths]
+**Learning:** Computed properties that perform synchronous `UserDefaults` lookups or complex string parsing (like version comparison) during SwiftUI `body` execution or list rendering are critical performance bottlenecks. This causes stuttering during scrolling as the main thread is blocked by repetitive disk I/O and redundant calculations.
+**Action:** Convert expensive computed properties to stored properties and pre-calculate them using a centralized `updateDerivedState()` method called during initialization and explicit data updates. Use an `ObservableObject` manager to centrally coordinate state changes and ensure UI consistency.
